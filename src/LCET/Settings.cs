@@ -15,15 +15,16 @@ namespace LCET
         }
         public bool LanguageConfirmed { get; set; } = true;
         public int LanguageSetupVersion { get; set; }
-        public int DebounceMs { get; set; } = 400;
+        public int DebounceMs { get; set; } = 700;
         public int PollMs { get; set; } = 250;
         public double FontSize { get; set; } = 22;
+        public int TranslationLines { get; set; } = 4;
         public string TranslationColor { get; set; } = "Black";
         public double Opacity { get; set; } = .5;
         public int OverlayLayoutVersion { get; set; }
         public bool FollowWindowsCaptions { get; set; } = true;
         public double Width { get; set; } = 900;
-        public double Height { get; set; } = 160;
+        public double Height { get; set; } = 124;
         public double Left { get; set; } = 100;
         public double Top { get; set; } = 100;
 
@@ -61,6 +62,11 @@ namespace LCET
                     if (settings.Height == 240) settings.Height = 160;
                     settings.OverlayLayoutVersion = 3;
                 }
+                if (settings.OverlayLayoutVersion < 4)
+                {
+                    if (settings.Height == 160) settings.Height = 124;
+                    settings.OverlayLayoutVersion = 4;
+                }
                 if (Array.IndexOf(new[] { "Black", "White", "Green", "Blue", "Red" }, settings.TranslationColor) < 0)
                     settings.TranslationColor = "Black";
                 if (!LanguageResources.IsLanguageTag(settings.SourceLanguage)) settings.SourceLanguage = "en";
@@ -74,9 +80,10 @@ namespace LCET
                 settings.DebounceMs = Math.Max(300, Math.Min(1000, settings.DebounceMs));
                 settings.PollMs = Math.Max(200, Math.Min(1000, settings.PollMs));
                 settings.FontSize = Math.Max(14, Math.Min(40, settings.FontSize));
+                settings.TranslationLines = Math.Max(2, Math.Min(6, settings.TranslationLines));
                 settings.Opacity = Math.Max(0, Math.Min(1, settings.Opacity));
                 settings.Width = Math.Max(420, Math.Min(1800, settings.Width));
-                settings.Height = Math.Max(160, Math.Min(1200, settings.Height));
+                settings.Height = Math.Max(96, Math.Min(1200, settings.Height));
                 return settings;
             }
             catch { return new Settings { LanguageSetupVersion = 1 }; }

@@ -38,12 +38,12 @@ namespace LCET
         private readonly TextBlock translationText = new TextBlock
         {
             TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.None,
-            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Margin = new Thickness(6, 0, 6, 8),
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Margin = new Thickness(6, 0, 6, 2),
             Foreground = Brushes.Black
         };
         private readonly TextBlock readinessStatus = new TextBlock
         {
-            TextWrapping = TextWrapping.Wrap, FontSize = 16, Margin = new Thickness(6, 8, 6, 8),
+            TextWrapping = TextWrapping.Wrap, FontSize = 16, Margin = new Thickness(6, 0, 6, 2),
             Foreground = Brushes.DimGray, VerticalAlignment = VerticalAlignment.Top
         };
         private readonly SolidColorBrush overlayBackground = new SolidColorBrush(Color.FromRgb(245, 248, 246));
@@ -96,6 +96,7 @@ namespace LCET
             public DateTime RetryAt;
             public DateTime Deadline;
             public string Text;
+            public bool Live;
         }
 
         public MainWindow(string root, string edge)
@@ -110,7 +111,7 @@ namespace LCET
             Width = settings.Width;
             Height = settings.Height;
             MinWidth = 420;
-            MinHeight = 160;
+            MinHeight = 96;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             ResizeMode = ResizeMode.CanResizeWithGrip;
@@ -177,16 +178,15 @@ namespace LCET
 
         private void BuildUi()
         {
-            var layout = new DockPanel { Margin = new Thickness(12, 4, 12, 6), Background = Brushes.Transparent };
+            var layout = new DockPanel { Margin = new Thickness(10, 2, 10, 2), Background = Brushes.Transparent };
             PreviewMouseLeftButtonDown += (sender, args) =>
             {
                 if (docked || args.ButtonState != MouseButtonState.Pressed || !CanDragFrom(args.OriginalSource as DependencyObject)) return;
                 args.Handled = true;
                 DragMove();
             };
-            var toolbar = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            DockPanel.SetDock(toolbar, Dock.Top);
-            layout.Children.Add(toolbar);
+            var toolbar = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+            DockPanel.SetDock(toolbar, Dock.Right);
             captionMicrophoneButton = IconButton(toolbar, "\uE720", "\u5f00\u5173 Windows \u5b57\u5e55\u9ea6\u514b\u98ce\u8bc6\u522b", ToggleCaptionMicrophone);
             AutomationProperties.SetAutomationId(captionMicrophoneButton, "CaptionMicrophone");
             captionLanguageButton = IconButton(toolbar, "", "\u540c\u6b65\u5207\u6362 Windows \u8bc6\u522b\u8bed\u8a00\u548c\u7ffb\u8bd1\u65b9\u5411",
@@ -203,7 +203,7 @@ namespace LCET
             layout.Children.Add(footer);
             var grip = new Thumb
             {
-                Width = 28, Height = 28, VerticalAlignment = VerticalAlignment.Bottom,
+                Width = 28, Height = 28, Margin = new Thickness(0, -12, 0, 0), VerticalAlignment = VerticalAlignment.Bottom,
                 Cursor = Cursors.SizeNWSE, ToolTip = "\u62d6\u52a8\u8c03\u6574\u7a97\u53e3\u5927\u5c0f"
             };
             var gripVisual = new FrameworkElementFactory(typeof(ResizeGrip));
@@ -240,10 +240,10 @@ namespace LCET
             status.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.5, GridUnitType.Star) });
             foreach (TextBlock label in new[] { captureStatus, edgeStatus, queueStatus })
             {
-                label.FontSize = 7;
-                label.LineHeight = 8.5;
+                label.FontSize = 9;
+                label.LineHeight = 12;
                 label.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-                label.Margin = new Thickness(3);
+                label.Margin = new Thickness(3, 1, 3, 1);
                 label.TextWrapping = TextWrapping.NoWrap;
                 label.TextTrimming = TextTrimming.CharacterEllipsis;
                 label.SetBinding(ToolTipProperty, new System.Windows.Data.Binding("Text") { Source = label });
@@ -251,9 +251,10 @@ namespace LCET
                 status.Children.Add(label);
             }
             footer.Children.Add(status);
+            layout.Children.Add(toolbar);
             captionScroll = new ScrollViewer
             {
-                Content = rows, Margin = new Thickness(0, 4, 0, 0),
+                Content = rows, Margin = new Thickness(0),
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
             };
@@ -441,10 +442,29 @@ namespace LCET
             AutomationProperties.SetAutomationId(font, "CaptionFontSize");
             font.ValueChanged += (sender, args) => { settings.FontSize = font.Value; ResizeForFont(); };
             options.Children.Add(font);
+            var lineOption = new StackPanel { Orientation = Orientation.Horizontal };
+            lineOption.Children.Add(Label("\u8bd1\u6587\u884c\u6570"));
+            var lineCount = new ComboBox
+            {
+                ItemsSource = Enumerable.Range(2, 5), SelectedItem = settings.TranslationLines,
+                Width = 56, Margin = new Thickness(6), VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "\u4fdd\u7559\u6700\u8fd1 2\u20136 \u6761\u8bd1\u6587\uff0c\u957f\u53e5\u81ea\u52a8\u6362\u884c"
+            };
+            AutomationProperties.SetAutomationId(lineCount, "TranslationLines");
+            AutomationProperties.SetName(lineCount, "\u8bd1\u6587\u884c\u6570");
+            lineCount.SelectionChanged += (sender, args) =>
+            {
+                if (!(lineCount.SelectedItem is int)) return;
+                settings.TranslationLines = (int)lineCount.SelectedItem;
+                ResizeForFont();
+                Save();
+            };
+            lineOption.Children.Add(lineCount);
+            options.Children.Add(lineOption);
             options.Children.Add(Label("\u7a97\u53e3\u9ad8\u5ea6"));
             heightControl = new Slider
             {
-                Minimum = 160, Maximum = 1200, Value = Height, Width = 100, Margin = new Thickness(6),
+                Minimum = 96, Maximum = 1200, Value = Height, Width = 100, Margin = new Thickness(6),
                 VerticalAlignment = VerticalAlignment.Center,
                 ToolTip = "\u7ffb\u8bd1\u7a97\u53e3\u9ad8\u5ea6\uff1b\u8ddf\u968f\u65f6\u53d7\u5c4f\u5e55\u53ef\u7528\u7a7a\u95f4\u9650\u5236"
             };
@@ -490,7 +510,7 @@ namespace LCET
             settingsWindow = new Window
             {
                 Title = "\u8bbe\u7f6e", Owner = this, Topmost = true, ShowInTaskbar = false,
-                Width = 620, Height = 300, MinWidth = 480, MinHeight = 220,
+                Width = Math.Min(900, Math.Max(480, SystemParameters.WorkArea.Width - 40)), Height = 340, MinWidth = 480, MinHeight = 220,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 FontFamily = FontFamily, FontSize = 14, Background = new SolidColorBrush(overlayBackground.Color), Foreground = Foreground,
                 Content = settingsContent
@@ -645,13 +665,16 @@ namespace LCET
                         edgeStatus.Text = "Edge: \u6709\u53e5\u5b50\u91cd\u8bd5\u540e\u4ecd\u5931\u8d25";
                     }
                 }
-                foreach (Segment segment in tracker.Ready(now, settings.DebounceMs))
+                tracker.DisplayLimit = settings.TranslationLines;
+                var liveIds = new HashSet<long>(tracker.DisplaySegments.Select(segment => segment.Id));
+                foreach (Segment segment in tracker.Ready(now, settings.DebounceMs)
+                    .OrderByDescending(segment => liveIds.Contains(segment.Id) ? segment.Id : long.MinValue))
                 {
                     int revision;
                     if (emitted.TryGetValue(segment.Id, out revision) && revision == segment.Revision) continue;
                     if (inFlight.ContainsKey(segment.Id)) continue;
-                    if (inFlight.Count >= 12 && !inFlight.ContainsKey(segment.Id)) break;
-                    var work = new Work { Segment = segment, Revision = segment.Revision, Text = segment.Text };
+                    if (inFlight.Count >= 2) break;
+                    var work = new Work { Segment = segment, Revision = segment.Revision, Text = segment.Text, Live = liveIds.Contains(segment.Id) };
                     inFlight[segment.Id] = work;
                     emitted[segment.Id] = segment.Revision;
                     Send(work);
@@ -660,8 +683,15 @@ namespace LCET
                 foreach (long id in emitted.Keys.Where(id => !retained.Contains(id)).ToArray()) emitted.Remove(id);
                 foreach (long id in inFlight.Keys.Where(id => !retained.Contains(id)).ToArray()) inFlight.Remove(id);
             }
+            int awaitingSubmission = tracker.Ready(now, settings.DebounceMs).Count(segment =>
+            {
+                int revision;
+                return !inFlight.ContainsKey(segment.Id) &&
+                    (!emitted.TryGetValue(segment.Id, out revision) || revision != segment.Revision);
+            });
             queueStatus.Text = (sessionLocked ? "\u4f1a\u8bdd\u5df2\u9501\u5b9a" : paused ? "\u5df2\u6682\u505c\u91c7\u96c6\u5904\u7406\u548c\u7ffb\u8bd1" : !models.Contains(CurrentModelKey) ? "\u7b49\u5f85\u5f53\u524d\u65b9\u5411 Edge \u6a21\u578b\u5c31\u7eea" : "\u8fd0\u884c\u4e2d") +
                 "  |  \u5f85\u7ffb\u8bd1 " + inFlight.Count + "  |  \u5df2\u8fd4\u56de " + accepted;
+            if (awaitingSubmission > 0) queueStatus.Text += "  |  \u5f85\u63d0\u4ea4 " + awaitingSubmission;
             if (failedTranslations > 0) queueStatus.Text += "  |  \u5931\u8d25 " + failedTranslations;
             if (transcript != null && transcript.LastError != null)
                 queueStatus.Text += "  |  TXT \u8bb0\u5f55\u5f02\u5e38: " + transcript.LastError;
@@ -841,6 +871,8 @@ namespace LCET
             if (!tracker.Accept(id, revision, settings.SourceLanguage, translation) &&
                 !tracker.AcceptPreview(id, revision, settings.SourceLanguage, work.Text, translation)) return;
             accepted++;
+            if (work.Live && (displayedTranslations.Count == 0 || id >= displayedTranslations.Keys.Last()))
+                displayedTranslations[id] = CaptionTracker.Normalize(translation);
             double elapsed = (DateTime.UtcNow - work.Segment.Changed).TotalMilliseconds;
             durations.Enqueue(elapsed);
             while (durations.Count > 500) durations.Dequeue();
@@ -854,16 +886,20 @@ namespace LCET
         private void Render()
         {
             if (rows.Children.Count == 0) rows.Children.Add(translationText);
+            tracker.DisplayLimit = settings.TranslationLines;
             Segment[] visible = tracker.DisplaySegments.ToArray();
-            var visibleIds = new HashSet<long>(visible.Select(segment => segment.Id));
-            foreach (long id in displayedTranslations.Keys.Where(id => !visibleIds.Contains(id)).ToArray())
-                displayedTranslations.Remove(id);
-            foreach (Segment segment in visible)
+            if (visible.Any(segment => !string.IsNullOrWhiteSpace(segment.Translation)))
             {
-                if (string.IsNullOrWhiteSpace(segment.Translation)) continue;
-                displayedTranslations[segment.Id] = CaptionTracker.Normalize(segment.Translation);
-                while (displayedTranslations.Count > 3) displayedTranslations.Remove(displayedTranslations.Keys.First());
+                var visibleIds = new HashSet<long>(visible.Select(segment => segment.Id));
+                foreach (long id in displayedTranslations.Keys.Where(id => !visibleIds.Contains(id)).ToArray())
+                    displayedTranslations.Remove(id);
+                foreach (Segment segment in visible)
+                {
+                    if (string.IsNullOrWhiteSpace(segment.Translation)) continue;
+                    displayedTranslations[segment.Id] = CaptionTracker.Normalize(segment.Translation);
+                }
             }
+            while (displayedTranslations.Count > settings.TranslationLines) displayedTranslations.Remove(displayedTranslations.Keys.First());
             string text = string.Join(Environment.NewLine, displayedTranslations.Values);
             bool changed = translationText.Text != text || translationText.FontSize != settings.FontSize;
             if (translationText.Text != text) translationText.Text = text;
@@ -892,9 +928,9 @@ namespace LCET
         {
             Render();
             dirty = false;
-            rows.Measure(new Size(Math.Max(100, ActualWidth > 0 ? ActualWidth - 48 : Width - 48), double.PositiveInfinity));
-            double baseline = 68 + 3 * settings.FontSize * 1.35;
-            double desired = Math.Max(160, Math.Min(720, Math.Max(baseline, rows.DesiredSize.Height + 68)));
+            rows.Measure(new Size(Math.Max(100, captionScroll.ViewportWidth > 0 ? captionScroll.ViewportWidth : Width - 224), double.PositiveInfinity));
+            double baseline = 32 + settings.TranslationLines * settings.FontSize * 1.35;
+            double desired = Math.Max(96, Math.Min(720, Math.Max(baseline, rows.DesiredSize.Height + 32)));
             ResizeOverlay(Width, desired);
         }
 
@@ -907,7 +943,7 @@ namespace LCET
 
         private void ResizeOverlay(double width, double height)
         {
-            height = Math.Max(160, Math.Min(1200, height));
+            height = Math.Max(96, Math.Min(1200, height));
             if (docked) { floatingBounds.Height = height; UpdateDocking(); }
             else
             {

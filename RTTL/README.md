@@ -24,7 +24,7 @@ real-time-txt-lite（简称 RTTL）是 Windows 11 上的本地翻译工具，提
 
 - 支持英语译中文、中文译英语，默认英语译中文。
 - 设置中选中源语言或目标语言即应用并保存，无需点击应用或勾选确认；若选中另一端的语言则自动交换。Windows 识别语言仍需手动匹配。
-- 悬浮窗可跟随 Windows 字幕，显示当前最近三段译文；长译文自动换行，中英文逗号可分段，数字中的逗号保留。
+- 悬浮窗可跟随 Windows 字幕，显示最多三段译文；等待新结果或可见范围短暂为空时保留上一屏，当前译文返回后替换。长译文自动换行，中英文逗号可分段，数字中的逗号保留。
 - 译文默认黑色，设置中可用色块切换黑、白、绿、蓝、红；颜色立即生效并保存。默认窗口高度由 240 减为 160，其他自定义高度保留。
 - 提供 Windows 字幕麦克风识别开关，以及仅限中英的识别语言／翻译方向同步切换按钮；均依赖 Windows 字幕界面控制成功。
 - Edge 页面支持多语言手动输入文本翻译；中英方向复用字幕模型，其他方向按需准备，切换时释放旧手动模型。
@@ -86,9 +86,13 @@ Copyright (c) 2026 real-time-txt-lite（RTTL）项目作者。保留所有权利
 
 网页首次打开时使用悬浮窗当前翻译方向，之后两端独立，重连不覆盖网页选择。两端语言选择器旁均有交换方向箭头，点击交换各自源／目标语言；悬浮窗交换会立即应用并保存，源语言改变后仍须手动匹配 Windows 识别语言，但无需确认勾选。外面的中英快捷切换按钮不变。
 
-右下角手柄可调整窗口尺寸；跟随 Windows 字幕时仅调整高度。也可在设置中用“窗口高度”滑杆直接调整至 160–1200，立即生效并保存；跟随时实际高度仍受屏幕可用空间限制。字幕采集优先使用控件的 UIA 可见文字范围，避免滚出视野的旧句占位；控件不支持时回退原读取方式，具体 Windows 版本仍需实测。
+悬浮窗采用紧凑布局，默认高度 124，底部状态字号增至 9。右下角手柄可调整窗口尺寸；跟随 Windows 字幕时仅调整高度。设置中的“窗口高度”滑杆支持 96–1200，立即生效并保存；跟随时实际高度仍受屏幕可用空间限制。“译文行数”默认保留四条，可选 2–6 条，选中立即保存，长译文仍自然换行；已有个人选择不强制覆盖。设置窗口默认加宽至最多 900、高度增至 340，行数标签与选择框保持同一行。旧默认高度会迁移，自定义高度保留。字幕采集优先使用控件的 UIA 可见文字范围；控件不支持时回退原读取方式，具体 Windows 版本仍需实测。
 
-会议文件位于 `%LOCALAPPDATA%\LCET\transcripts`，可能包含原文、译文和手动输入的敏感信息，请按组织保密要求管理。强制结束进程无法保证弹出保留提示。若启动失败，请查看控制台；如被组织策略阻止，请联系 IT，不要关闭安全防护或绕过策略。
+等待新译文时保留最近译文，不因字幕滚动或短暂空快照清空；实时结果返回时，即使源句刚滚出画面，也可更新最近可用译文。较旧结果不能覆盖较新译文，历史补译不回填。当前未完句只剩可见尾部时仍允许其译文显示。点击“清空”、切换方向或会话重置仍清除旧显示；首次还没有译文时仍会等待。
+
+翻译最多同时执行两条，两个通用槽位共用队列，优先处理最新字幕；任务优先按 A、B、A、B 交替分派，轮到的槽忙时使用另一空闲槽，不固定区分实时和历史用途。同一句段的两个版本不会同时执行，新版需等旧调用结束；识别修订仍可后续重译。手动翻译也计入两条总上限。第二槽按需创建独立 Translator 会话，切换会话或退出时释放；这不等于控制模型线程数，也不保证提速或修复设备性能问题。默认静默去抖 700 ms，同一片段的连续预览间隔 1500 ms；已有个人设置保留。
+
+会议文件位于 `%LOCALAPPDATA%\LCET\transcripts`，后台每 4 秒合并追加一次 TXT，正常退出立即补写剩余记录，再询问是否保留。手动翻译只有实际写入后才确认“已记录”。强制结束或断电可能丢失尚未写入的内容，也无法保证弹出保留提示。文件可能包含原文、译文和手动输入的敏感信息，请按组织保密要求管理。若启动失败，请查看控制台；如被组织策略阻止，请联系 IT，不要关闭安全防护或绕过策略。
 
 ### 数据位置与故障排查
 
@@ -120,7 +124,7 @@ Copyright (c) 2026 real-time-txt-lite（RTTL）项目作者。保留所有权利
 
 - **不支持语言自动检测或跟随说话者自动切换。** 多语言混说可能识别错误；语言选择立即生效并不代表实际 Windows 识别语言已匹配，程序只作提醒。
 - **154 个候选项不等于 154 种可用识别语言或任意可用翻译组合。** 能否识别由 Windows 决定，能否翻译由当前 Edge、模型和策略决定；没有逐一验证所有语言对。
-- **不是完整、无遗漏的会议转写或录音工具。** 只读取 Windows 当前可访问的字幕，显示最近三段；识别修订、字幕滚动、延迟、队列过载、翻译或磁盘错误都可能导致记录缺句，不能保证逐字准确。
+- **不是完整、无遗漏的会议转写或录音工具。** 只读取 Windows 当前可访问的字幕，默认显示四条，可选 2–6 条；识别修订、字幕滚动、延迟、队列过载、翻译或磁盘错误都可能导致记录缺句，不能保证逐字准确。
 - **依赖 Windows UI Automation 和 Edge。** 系统更新、字幕界面变化或企业策略可能影响捕获、跟随、麦克风及中英快捷切换。关闭翻译页面会中断翻译；没有 OCR 或云端回退。
 - **“lite”不代表零资源占用。** Edge 本地模型消耗内存和计算资源；已有用户反馈并行运行时识别漏句增加，原因尚未确认，需要在目标电脑与仅开 Windows 字幕进行对照，不能保证不影响识别或实时性能。
 - **离线与兼容性仍需实机验证。** 首次资源准备需要联网；已安装模型不代表任意电脑重启后都能离线使用。麦克风开启、完整中译英识别切换、混合 DPI、多屏及长时间运行仍有验证缺口。
@@ -143,7 +147,7 @@ Pipeline: Windows Live Captions recognizes speech → UI Automation reads captio
 
 - Supports English-to-Chinese and Chinese-to-English translation; English-to-Chinese is the default.
 - Source and target selections in overlay Settings apply and save immediately, without an Apply button or confirmation checkbox. Selecting the language currently used on the other side swaps the pair. Match the Windows recognition language manually.
-- The overlay can follow Windows captions and shows up to three current translation segments. Long text wraps automatically; English and Chinese commas can split segments, while commas within numbers are preserved.
+- The overlay can follow Windows captions and shows up to three translation segments. It retains the previous frame while new results are pending or visible text is briefly empty, then replaces it when current translations arrive. Long text wraps automatically; English and Chinese commas can split segments, while commas within numbers are preserved.
 - Translation text defaults to black. Settings offer black, white, green, blue, and red swatches; changes apply immediately and are saved. Default window height is reduced from 240 to 160, preserving other custom heights.
 - Includes controls for Windows caption microphone recognition and English/Chinese-only synchronized recognition-language/translation-direction switching. Both depend on successful interaction with the Windows captions interface.
 - The Edge page supports multilingual manual text translation. English/Chinese directions reuse caption models; other pairs are prepared on demand, and the previous manual model is released when selections change.
@@ -199,7 +203,7 @@ Run as a standard user; administrator privileges are not required to launch the 
 5. Play system audio to begin. Use the overlay microphone button if microphone recognition is needed; it controls Windows caption recognition, not system mute. The direction button switches recognition and translation between en-US and zh-CN only. Install the required language packs first; if switching fails, follow the warning and check the original Windows caption settings.
 6. Exit using the overlay's top-right exit button. If the session has records, choose Yes to keep and open its TXT file, or No to delete only that session's file. Earlier session files are not deleted.
 
-Session files are stored in `%LOCALAPPDATA%\LCET\transcripts` and may contain sensitive source text, translations, and manual input. Handle them according to your organization's confidentiality rules. Forcefully terminating the process cannot guarantee a keep/delete prompt. If startup fails, check the console. Contact IT for policy restrictions; do not disable security protections or bypass policies.
+Session files are stored in `%LOCALAPPDATA%\LCET\transcripts`. The background writer appends a combined batch every 4 seconds; normal exit immediately drains remaining entries before asking whether to keep the file. Manual recording is acknowledged only after writing succeeds. Forced termination or power loss can lose unwritten content and cannot guarantee a keep/delete prompt. Files may contain sensitive source text, translations, and manual input; handle them according to your organization's confidentiality rules. If startup fails, check the console. Contact IT for policy restrictions; do not disable security protections or bypass policies.
 
 For manual text, select source and target languages independently. Missing models are prepared only after clicking “下载模型并翻译” (download model and translate). Automatic Windows speech-pack checks and installation status labels have been removed. The heading retains a link to Microsoft's official speech-pack instructions: choose and download the recognition language in the Caption language menu of Windows Live Captions, rather than installing a complete display language pack. Edge models are managed separately; text-only translation does not require Windows speech packs.
 
@@ -207,7 +211,11 @@ Overlay source and target selections apply and save immediately; there is no App
 
 On first opening, the webpage adopts the overlay's current translation direction once. The two directions are independent afterward, including reconnects. Both language selectors have a swap-arrow button that exchanges their own source and target; overlay swaps apply and save immediately. Match a changed caption source in Windows manually; no confirmation checkbox is required. The external English/Chinese shortcut is unchanged.
 
-Use the enlarged bottom-right grip to resize; docking follows Windows caption width and allows height changes only. Settings also provide a “窗口高度” (window height) slider from 160 to 1200, applied and saved immediately. Docked height remains limited by available screen space. Capture prefers UIA visible text ranges to avoid retaining offscreen sentences, with the original reading method as a fallback for unsupported controls. Actual behavior still requires validation on the target Windows version.
+The compact overlay defaults to height 124, with footer status text at size 9. Use the enlarged bottom-right grip to resize; docking follows Windows caption width and allows height changes only. Settings provide a “窗口高度” (window height) slider from 96 to 1200 and “译文行数” (translation rows), defaulting to four and adjustable from 2 to 6. Changes apply and save immediately; long translations wrap naturally, and existing personal row selections are preserved. The settings window defaults to up to 900 wide and 340 high, and the row label and selector stay together. Old default heights migrate, while custom heights are preserved. Docked height remains limited by available screen space. Capture prefers UIA visible text ranges, with the original reading method as a fallback for unsupported controls. Actual behavior still requires validation on the target Windows version.
+
+While new translations are pending, the previous translations remain visible through scrolling or briefly empty snapshots. A live result may update the latest available translation even if its source has just scrolled away; older results cannot overwrite newer translations, and historical backfill is not replayed. The visible suffix of an in-progress sentence remains eligible for display. Clear, direction changes, and session resets still remove the previous display. Before the first successful translation, the waiting message remains normal.
+
+At most two translations execute concurrently in interchangeable slots sharing one queue, prioritizing the latest captions. Assignment prefers A, B, A, B; if the preferred slot is busy, the other free slot is used. Neither slot is reserved for live or historical work. Revisions of the same segment never execute simultaneously; a newer revision waits for the older call to finish. Recognition revisions may still be translated later. Manual translation shares the same two-call limit. The second slot creates a separate Translator session on demand and releases it on session reset or exit. This does not control inference thread counts or guarantee speedups or a fix for device performance issues. The default quiet debounce is 700 ms and continuous previews of the same segment are spaced by 1500 ms; existing personal settings are preserved.
 
 ### Local Data and Troubleshooting
 
@@ -239,7 +247,7 @@ Uploading only this directory publishes a runtime package with a precompiled DLL
 
 - **No automatic language detection or speech-driven switching.** Mixed-language speech may be recognized incorrectly. Immediate selection changes do not certify a matching Windows recognition language; RTTL only displays a reminder.
 - **154 candidates are not 154 supported recognition languages or universally supported translation pairs.** Recognition depends on Windows; translation depends on Edge, models, and policy. Not all pairs have been validated.
-- **Not a complete, lossless transcript or audio recorder.** Only currently accessible Windows captions are read, and the latest three segments are displayed. Recognition revisions, scrolling, delays, queue overload, translation failures, or disk errors can leave gaps. Verbatim accuracy is not guaranteed.
+- **Not a complete, lossless transcript or audio recorder.** Only currently accessible Windows captions are read; four translations are displayed by default, adjustable from 2 to 6. Recognition revisions, scrolling, delays, queue overload, translation failures, or disk errors can leave gaps. Verbatim accuracy is not guaranteed.
 - **Depends on Windows UI Automation and Edge.** Updates, UI changes, and policies may affect capture, docking, microphone controls, and bilingual switching. Closing the translation page interrupts translation. There is no OCR or cloud fallback.
 - **"lite" does not mean zero resource use.** Edge models consume memory and compute resources. A user reported increased recognition gaps during concurrent use; the cause remains unconfirmed and requires comparison against Windows captions alone on the affected computer. No guarantee of unaffected recognition or real-time performance is made.
 - **Offline operation and compatibility require device testing.** Initial resource setup needs internet access; installed models do not certify offline use after restart on every computer. Microphone activation, full Chinese recognition switching, mixed-DPI/multi-monitor use, and long sessions still have validation gaps.

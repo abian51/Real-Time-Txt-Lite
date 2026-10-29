@@ -22,10 +22,12 @@ Assert ($tracker.Segments.Count -eq 1 -and $tracker.Segments[0].Text -eq 'Hello 
 Assert ($tracker.Segments.Count -eq 1) 'punctuation does not duplicate segment'
 $revision = $tracker.Segments[0].Revision
 Assert ($tracker.Accept($id, $revision, 'en', 'valid')) 'latest revision accepted'
+Assert (@($tracker.Ready($now.AddSeconds(2), 700)).Count -eq 0) 'already translated revision never reenters ready queue after submission state resets'
 Assert (-not $tracker.Accept($id, $revision, 'zh', 'wrong')) 'wrong direction rejected'
 Assert (-not $tracker.Observe('Hello word.', 'en', $now)) 'unchanged snapshot ignored'
 [void]$tracker.Observe('Hello world.', 'en', $now)
 Assert ($tracker.Segments.Count -eq 1 -and $tracker.Segments[0].Id -eq $id) 'revision after final punctuation keeps same segment'
+Assert (@($tracker.Ready($now.AddSeconds(2), 700)).Count -eq 1) 'new recognition revision remains eligible despite an earlier completed translation'
 [void]$tracker.Observe('Hello word.', 'en', $now)
 [void]$tracker.Observe('Hello word. Next sentence', 'en', $now)
 [void]$tracker.Observe('Next sentence continues', 'en', $now)
@@ -54,6 +56,15 @@ $history = New-Object LCET.CaptionTracker
 Assert ($history.Segments.Count -eq 3) 'initial multi-sentence snapshot split'
 [void]$history.Observe('Two. Three. Four. Five.', 'en', $now)
 Assert ((@($history.DisplaySegments | ForEach-Object { $_.Text }) -join '|') -eq 'Three.|Four.|Five.') 'display eligibility follows newest three sentences in scrolling Windows snapshot'
+$clipped = New-Object LCET.CaptionTracker
+[void]$clipped.Observe('Opening context continues across the line', 'en', $now)
+$clippedId = $clipped.Segments[0].Id
+[void]$clipped.Observe('context continues across the line and more', 'en', $now.AddSeconds(1))
+Assert ($clipped.Segments.Count -eq 1 -and $clipped.Segments[0].Id -eq $clippedId) 'cropped visible range retains the in-progress source segment'
+Assert (@($clipped.DisplaySegments).Count -eq 1 -and @($clipped.DisplaySegments)[0].Id -eq $clippedId) 'visible suffix keeps its current segment eligible when the sentence start scrolls out'
+[void]$clipped.Accept($clippedId, $clipped.Segments[0].Revision, 'en', 'Previous clipped translation')
+[void]$clipped.Observe('Entirely different source', 'en', $now.AddSeconds(2))
+Assert (@($clipped.DisplaySegments).Count -eq 1 -and @($clipped.DisplaySegments)[0].Text -eq 'Entirely different source' -and -not @($clipped.DisplaySegments)[0].Translation) 'visible suffix exception never restores unrelated source text or its old translation'
 $chinese = ([string][char]0x4F60) + [char]0x597D + [char]0x3002
 $mixed = New-Object LCET.CaptionTracker
 [void]$mixed.Observe(($chinese + 'Hello!'), 'zh', $now)
@@ -95,19 +106,30 @@ $oldest = $pendingHistory.Segments[0]
 [void]$pendingHistory.Accept($oldest.Id, $oldest.Revision, 'en', 'translated oldest')
 $removed = $pendingHistory.TrimHistory(3, $true)
 Assert ($removed.Length -eq 1 -and $removed[0] -eq $oldest.Id -and $pendingHistory.Segments.Count -eq 4) 'history cleanup removes completed old translation while preserving remaining pending work'
+Assert ((New-Object LCET.Settings).DebounceMs -eq 700 -and (New-Object LCET.Settings).PollMs -eq 250) 'default debounce is 700ms while caption polling remains 250ms'
+$debounced = New-Object LCET.CaptionTracker
+[void]$debounced.Observe('Settling caption', 'en', $now)
+Assert (@($debounced.Ready($now.AddMilliseconds(699), 700)).Count -eq 0) '700ms debounce holds a caption before its boundary'
+Assert (@($debounced.Ready($now.AddMilliseconds(700), 700)).Count -eq 1) '700ms debounce releases a settled caption at its boundary'
 $live = New-Object LCET.CaptionTracker
 [void]$live.Observe('We', 'en', $now)
-foreach ($number in 1..5) { [void]$live.Observe(('We ' + ('word ' * $number)), 'en', $now.AddMilliseconds($number * 200)) }
-$due = @($live.Ready($now.AddMilliseconds(1100), 400))
+foreach ($number in 1..7) { [void]$live.Observe(('We ' + ('word ' * $number)), 'en', $now.AddMilliseconds($number * 200)) }
+Assert (@($live.Ready($now.AddMilliseconds(1499), 700)).Count -eq 0) 'continuous speech does not request a preview before 1500ms'
+$due = @($live.Ready($now.AddMilliseconds(1500), 700))
 Assert ($due.Count -eq 1) 'continuous speech gets preview without waiting for silence'
+$live.Segments[0].LastSubmitted = $now.AddMilliseconds(1500)
+[void]$live.Observe(($live.Segments[0].Text + ' continuing'), 'en', $now.AddMilliseconds(2800))
+Assert (@($live.Ready($now.AddMilliseconds(2999), 700)).Count -eq 0) 'continuous previews wait 1500ms after the previous submission'
+Assert (@($live.Ready($now.AddMilliseconds(3000), 700)).Count -eq 1) 'continuous previews resume at the next 1500ms boundary'
 $requested = $live.Segments[0].Text
 $liveRevision = $live.Segments[0].Revision
 $liveId = $live.Segments[0].Id
-[void]$live.Observe(($requested + ' next'), 'en', $now.AddMilliseconds(1200))
+[void]$live.Observe(($requested + ' next'), 'en', $now.AddMilliseconds(3200))
 Assert ($live.AcceptPreview($liveId, $liveRevision, 'en', $requested, 'preview')) 'append-only update accepts newest requested prefix preview'
-[void]$live.Observe(($requested + ' next word'), 'en', $now.AddMilliseconds(1400))
+Assert (@($live.Ready($now.AddMilliseconds(3300), 700)).Count -eq 1) 'prefix preview never suppresses translation of the newer full revision'
+[void]$live.Observe(($requested + ' next word'), 'en', $now.AddMilliseconds(3400))
 Assert ($live.Segments[0].Translation -eq 'preview') 'append retains prior preview until replacement arrives'
-[void]$live.Observe('We corrected the sentence', 'en', $now.AddMilliseconds(1600))
+[void]$live.Observe('We corrected the sentence', 'en', $now.AddMilliseconds(3600))
 Assert (-not $live.AcceptPreview($liveId, $liveRevision, 'en', $requested, 'stale')) 'rewritten source rejects outdated prefix preview'
 $settingsFolder = Join-Path ([IO.Path]::GetTempPath()) ('LCET-language-settings-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($settingsFolder)
@@ -131,7 +153,7 @@ try {
     Assert ($serialized -notmatch 'PrivacyMode|TranscriptSettingsVersion') 'saved settings no longer contain removed privacy fields'
     [IO.File]::WriteAllText($settingsFile, '{"OverlayLayoutVersion":2,"Height":240}')
     $loaded = $loadSettings.Invoke($settingsFile)
-    Assert ($loaded.Height -eq 160 -and $loaded.OverlayLayoutVersion -eq 3 -and $loaded.TranslationColor -eq 'Black') 'old default height migrates to 160 and missing color defaults to black'
+    Assert ($loaded.Height -eq 124 -and $loaded.OverlayLayoutVersion -eq 4 -and $loaded.TranslationColor -eq 'Black') 'old default height migrates to compact 124 and missing color defaults to black'
     [IO.File]::WriteAllText($settingsFile, '{"OverlayLayoutVersion":2,"Height":420,"TranslationColor":"Blue"}')
     $loaded = $loadSettings.Invoke($settingsFile)
     Assert ($loaded.Height -eq 420 -and $loaded.TranslationColor -eq 'Blue') 'custom height and selected translation color survive loading'
@@ -140,6 +162,17 @@ try {
     Assert ($loaded.Height -eq 240 -and $loaded.TranslationColor -eq 'Black') 'height migration runs once and invalid color falls back to black'
     $serialized = (New-Object System.Web.Script.Serialization.JavaScriptSerializer).Serialize($loaded)
     Assert ($serialized -match '"TranslationColor":"Black"') 'translation color is included in persisted settings'
+    Assert ($loaded.TranslationLines -eq 4) 'missing translation line setting defaults to four'
+    [IO.File]::WriteAllText($settingsFile, '{"OverlayLayoutVersion":3,"Height":160,"TranslationLines":9}')
+    $loaded = $loadSettings.Invoke($settingsFile)
+    Assert ($loaded.Height -eq 124 -and $loaded.OverlayLayoutVersion -eq 4 -and $loaded.TranslationLines -eq 6) 'previous default height becomes compact and display lines are capped at six'
+    [IO.File]::WriteAllText($settingsFile, '{"OverlayLayoutVersion":4,"Height":160,"TranslationLines":1}')
+    $loaded = $loadSettings.Invoke($settingsFile)
+    Assert ($loaded.Height -eq 160 -and $loaded.TranslationLines -eq 2) 'compact migration runs once and display lines have a minimum of two'
+    [IO.File]::WriteAllText($settingsFile, '{"OverlayLayoutVersion":4,"Height":96,"TranslationLines":6}')
+    $loaded = $loadSettings.Invoke($settingsFile)
+    $serialized = (New-Object System.Web.Script.Serialization.JavaScriptSerializer).Serialize($loaded)
+    Assert ($loaded.Height -eq 96 -and $loaded.TranslationLines -eq 6 -and $serialized -match '"TranslationLines":6') 'compact minimum height and six-line preference survive serialization'
     [IO.File]::WriteAllText($settingsFile, '{"SourceLanguage":"zh"}')
     $loaded = $loadSettings.Invoke($settingsFile)
     Assert ($loaded.TargetLanguage -eq 'en') 'legacy Chinese source retains its English target'
@@ -157,10 +190,14 @@ $completedSegment = $completed.Segments[0]
 Assert (@($completed.Completed($now.AddMilliseconds(500))).Count -eq 0) 'recording waits for sentence correction grace period'
 Assert (@($completed.Completed($now.AddSeconds(1))).Count -eq 1) 'completed full translation becomes recordable'
 $folder = Join-Path ([IO.Path]::GetTempPath()) ('LCET-transcript-test-' + [Guid]::NewGuid().ToString('N'))
+$batchClock = [Diagnostics.Stopwatch]::StartNew()
 $writer = New-Object LCET.TranscriptWriter($folder)
+$recordedRequests = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+$writer.add_ManualRecorded([Delegate]::CreateDelegate([Action[string]], $recordedRequests, 'Enqueue'))
 try {
     $file = $writer.FilePath
     Assert ($writer.RecordCompleted($completed, $now.AddSeconds(1)) -eq 1) 'completed sentence queued for background recording'
+    Assert (-not [Threading.SpinWait]::SpinUntil([Func[bool]]{ [IO.File]::Exists($file) }, 300)) 'queued transcript waits for the four-second batch instead of writing immediately'
     Assert ($writer.RecordCompleted($completed, $now.AddSeconds(2)) -eq 0) 'repeated ticks do not duplicate recorded sentence'
     [void]$completed.Observe('Completed correctly.', 'en', $now.AddSeconds(2))
     [void]$completed.Accept($completedSegment.Id, $completedSegment.Revision, 'en', 'corrected translation')
@@ -175,6 +212,11 @@ try {
     $multilingualSegment = $multilingual.Segments[0]
     [void]$multilingual.Accept($multilingualSegment.Id, $multilingualSegment.Revision, 'fr', 'Japanese caption translation')
     Assert ($writer.RecordCompleted($multilingual, $now.AddSeconds(1)) -eq 1) 'completed caption accepts an explicit non-English target'
+    Assert ($recordedRequests.Count -eq 0) 'manual entries are not acknowledged as recorded before the batch is written'
+    Assert ([Threading.SpinWait]::SpinUntil([Func[bool]]{ $recordedRequests.Count -eq 2 }, 7000)) 'four-second batch writes automatically without requiring exit'
+    Assert ($batchClock.ElapsedMilliseconds -ge 4000) 'normal background write is deferred for the full four-second interval'
+    $batchedContent = [IO.File]::ReadAllText($file, [Text.Encoding]::UTF8)
+    Assert ([regex]::Matches($batchedContent, '(?m)^\[').Count -eq 5 -and $writer.PendingCount -eq 0) 'one timed batch contains all five queued records in the same session file'
     $writer.Dispose()
     $content = [IO.File]::ReadAllText($file, [Text.Encoding]::UTF8)
     Assert ($content.Contains(([string][char]0x4F60 + [char]0x597D)) -and $content.Contains('Source: Completed.') -and $content.Contains('Translation: corrected translation')) 'UTF-8 transcript contains source and translation'
@@ -230,7 +272,7 @@ try {
     $segment = $queued.Segments[0]
     [void]$queued.Accept($segment.Id, $segment.Revision, 'en', 'translation 0')
     [void]$writer.RecordCompleted($queued, $now, $true)
-    Assert ([Threading.SpinWait]::SpinUntil([Func[bool]]{ $null -ne $writer.LastError }, 3000)) 'write failure reported without blocking or crashing caption processing'
+    Assert ([Threading.SpinWait]::SpinUntil([Func[bool]]{ $null -ne $writer.LastError }, 7000)) 'write failure reported at the scheduled batch without blocking or crashing caption processing'
     $count = 0
     foreach ($number in 1..128) {
         [void]$queued.Observe('', 'en', $now)
@@ -247,7 +289,7 @@ try {
     Assert ($writer.RecordCompleted($queued, $now, $true) -eq 0 -and $segment.RecordedRevision -eq 0) 'full queue returns without marking unwritten sentence as recorded'
     [IO.File]::Delete($blocked)
     [void][IO.Directory]::CreateDirectory($blocked)
-    Assert ([Threading.SpinWait]::SpinUntil([Func[bool]]{ $writer.RecordCompleted($queued, $now, $true) -gt 0 }, 4000)) 'recording resumes after filesystem recovery and retries pending sentence'
+    Assert ([Threading.SpinWait]::SpinUntil([Func[bool]]{ $writer.RecordCompleted($queued, $now, $true) -gt 0 }, 7000)) 'next scheduled batch frees queue space after filesystem recovery and retries pending sentence'
     $writer.Dispose()
     $content = [IO.File]::ReadAllText($writer.FilePath)
     Assert ([regex]::Matches($content, '(?m)^\[').Count -eq 130 -and $null -eq $writer.LastError) 'all accepted sentences drained after recovery with no loss or duplication'

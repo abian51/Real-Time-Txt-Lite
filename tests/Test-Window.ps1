@@ -56,6 +56,7 @@ try {
     [void]$setPair.Invoke($originalSource, $originalTarget)
     $languageSettings.LanguageConfirmed = $originalConfirmed
     $tracker = $type.GetField('tracker', $flags).GetValue($window)
+    $languageSettings.TranslationLines = 3
     [void]$tracker.Observe('One. Two. Three. Four.', 'en', [DateTime]::UtcNow)
     foreach ($segment in $tracker.Segments) { [void]$tracker.Accept($segment.Id, $segment.Revision, 'en', ('Translation ' + $segment.Id)) }
     [void]$type.GetMethod('Render', $flags).Invoke($window, @())
@@ -63,7 +64,7 @@ try {
     $currentText = $rows.Children[0]
     Assert ($rows.Children.Count -eq 1 -and $currentText -is [System.Windows.Controls.TextBlock] -and $currentText.Text -eq ("Translation 2" + [Environment]::NewLine + "Translation 3" + [Environment]::NewLine + "Translation 4")) 'only three latest translations rendered without source or unbounded history'
     $labels = @('captureStatus','edgeStatus','queueStatus') | ForEach-Object { $type.GetField($_, $flags).GetValue($window) }
-    Assert (@($labels | Where-Object { $_.FontSize -eq 7 -and $_.Margin.Top -eq 3 -and $_.LineHeight -eq 8.5 }).Count -eq 3) 'status font and spacing reduced by half'
+    Assert (@($labels | Where-Object { $_.FontSize -eq 9 -and $_.Margin.Top -eq 1 -and $_.LineHeight -eq 12 }).Count -eq 3) 'status font increases by two points with compact vertical margins'
     $status = [System.Windows.LogicalTreeHelper]::GetParent($labels[0])
     Assert ($status -is [System.Windows.Controls.Grid] -and $status.ColumnDefinitions.Count -eq 3 -and $status.RowDefinitions.Count -le 1) 'three status fields share one horizontal grid row'
     Assert (@($labels | Where-Object { $_.TextWrapping -eq [System.Windows.TextWrapping]::NoWrap -and $_.TextTrimming -eq [System.Windows.TextTrimming]::CharacterEllipsis }).Count -eq 3) 'long status text stays on one line with ellipsis'
@@ -76,7 +77,7 @@ try {
     $content = $type.GetField('settingsContent', $flags).GetValue($window)
     Assert (@(Elements $content | Where-Object { [System.Windows.Automation.AutomationProperties]::GetAutomationId($_) -eq 'PrivacyMode' }).Count -eq 0) 'settings window has no privacy toggle'
     Assert ($null -eq $type.GetField('confirmed', $flags) -and @(Elements $content | Where-Object { $_ -is [System.Windows.Controls.Button] -and $_.Content -eq (([string][char]0x5E94) + [char]0x7528 + [char]0x65B9 + [char]0x5411) }).Count -eq 0) 'language settings have no confirmation checkbox or Apply Direction button'
-    Assert (@(Elements $content | Where-Object { $_ -is [System.Windows.Controls.ComboBox] }).Count -eq 2) 'source and target language controls are available inside settings'
+    Assert (@(Elements $content | Where-Object { $_ -is [System.Windows.Controls.ComboBox] }).Count -eq 3) 'source target and translation line controls are available inside settings'
     $sourcePicker = $type.GetField('direction', $flags).GetValue($window)
     $targetPicker = $type.GetField('targetDirection', $flags).GetValue($window)
     Assert ($sourcePicker.Items.Count -eq 154 -and $targetPicker.Items.Count -eq 154) 'native source and target selectors share all 154 web language candidates'
@@ -84,7 +85,7 @@ try {
     Assert ($sourcePicker.SelectedValue -eq $originalSource -and $targetPicker.SelectedValue -eq $originalTarget) 'native selectors reflect saved source and target independently'
     $swapDirection = @(Elements $content | Where-Object { [System.Windows.Automation.AutomationProperties]::GetAutomationId($_) -eq 'SwapCaptionDirection' })[0]
     Assert ($swapDirection -is [System.Windows.Controls.Button] -and $swapDirection.ToolTip -and [System.Windows.Automation.AutomationProperties]::GetName($swapDirection)) 'native settings expose an accessible direction swap button'
-    Assert ((New-Object LCET.Settings).Height -eq 160 -and $window.MinHeight -eq 160) 'default height reduced by one third from 240 to 160'
+    Assert ((New-Object LCET.Settings).Height -eq 124 -and $window.MinHeight -eq 96) 'compact overlay defaults to height 124 and permits shrinking to 96'
     Assert ((New-Object LCET.Settings).TranslationColor -eq 'Black') 'fresh translation color defaults to black'
     $colorChoices = @(Elements $content | Where-Object { $_ -is [System.Windows.Controls.RadioButton] -and $_.GroupName -eq 'TranslationColor' })
     Assert ($colorChoices.Count -eq 5) 'settings offer five translation color swatches'
@@ -120,10 +121,10 @@ try {
     $minimum = New-Object System.Windows.Controls.Primitives.DragDeltaEventArgs(-3000, -3000)
     $minimum.RoutedEvent = [System.Windows.Controls.Primitives.Thumb]::DragDeltaEvent
     $grip.RaiseEvent($minimum)
-    Assert ($window.Width -eq 420 -and $window.Height -eq 160) 'resize grip enforces minimum dimensions'
+    Assert ($window.Width -eq 420 -and $window.Height -eq 96) 'resize grip enforces minimum dimensions'
     Assert ($grip.Width -ge 28 -and $grip.Height -ge 28 -and [System.Windows.Automation.AutomationProperties]::GetAutomationId($grip) -eq 'OverlayResizeGrip') 'resize grip has an enlarged stable accessible target'
     $heightControl = @(Elements $content | Where-Object { [System.Windows.Automation.AutomationProperties]::GetAutomationId($_) -eq 'OverlayHeight' })[0]
-    Assert ($heightControl -is [System.Windows.Controls.Slider] -and $heightControl.Minimum -eq 160 -and $heightControl.Maximum -eq 1200) 'settings offer a bounded direct height control'
+    Assert ($heightControl -is [System.Windows.Controls.Slider] -and $heightControl.Minimum -eq 96 -and $heightControl.Maximum -eq 1200) 'settings offer a bounded direct height control'
     $resizeFromPointer = $type.GetMethod('ResizeFromPointer', $flags).CreateDelegate([Action[System.Windows.Vector]], $window)
     $type.GetField('resizeInitialSize', $flags).SetValue($window, (New-Object System.Windows.Size(420, 160)))
     $resizeFromPointer.Invoke((New-Object System.Windows.Vector(0, 40)))
@@ -135,7 +136,9 @@ try {
     $heightControl.Value = 320
     Assert ($window.Height -eq 320 -and $window.Width -eq 420) 'height control changes floating height without changing width'
     $heightControl.Value = 160
-    Assert ($window.Height -eq 160) 'height control can shrink the overlay back to its minimum'
+    Assert ($window.Height -eq 160) 'height control can return the overlay to its previous height'
+    $heightControl.Value = 96
+    Assert ($window.Height -eq 96) 'height control can remove extra whitespace down to the compact minimum'
     Assert ((New-Object LCET.Settings).FollowWindowsCaptions) 'following Windows captions enabled by default'
     $follow = @(Elements $content | Where-Object { $_ -is [System.Windows.Controls.CheckBox] -and [System.Windows.Automation.AutomationProperties]::GetAutomationId($_) -eq 'FollowWindowsCaptions' })
     Assert ($follow.Count -eq 1) 'follow switch available in settings'
@@ -171,8 +174,43 @@ try {
     $type.GetField('docked', $flags).SetValue($window, $true)
     $type.GetField('floatingBounds', $flags).SetValue($window, (New-Object System.Windows.Rect(100, 100, 800, 200)))
     $font.Value = 40
-    Assert ($type.GetField('floatingBounds', $flags).GetValue($window).Height -gt 200) 'docked font change updates remembered desired height'
+    Assert ($type.GetField('floatingBounds', $flags).GetValue($window).Height -ge (32 + 3 * $font.Value * 1.35)) 'docked font change updates remembered height to fit the compact three-line baseline'
     $type.GetField('docked', $flags).SetValue($window, $false)
+    $lineCount = @(Elements $content | Where-Object { [System.Windows.Automation.AutomationProperties]::GetAutomationId($_) -eq 'TranslationLines' })[0]
+    Assert ((New-Object LCET.Settings).TranslationLines -eq 4 -and ($lineCount.Items -join ',') -eq '2,3,4,5,6') 'translation line setting defaults to four and offers exactly two through six'
+    $lineOption = [System.Windows.LogicalTreeHelper]::GetParent($lineCount)
+    Assert ($lineOption -is [System.Windows.Controls.StackPanel] -and $lineOption.Orientation -eq [System.Windows.Controls.Orientation]::Horizontal -and $lineOption.Children.Count -eq 2) 'translation row label and selector form one non-splitting horizontal setting'
+    foreach ($settingsWidth in @(900, 480)) {
+        $content.Measure((New-Object System.Windows.Size($settingsWidth, 340)))
+        $content.Arrange((New-Object System.Windows.Rect(0, 0, $settingsWidth, 340)))
+        $content.UpdateLayout()
+        $labelOrigin = $lineOption.Children[0].TranslatePoint((New-Object System.Windows.Point(0, 0)), $lineOption)
+        $pickerOrigin = $lineCount.TranslatePoint((New-Object System.Windows.Point(0, 0)), $lineOption)
+        Assert ([Math]::Abs(($labelOrigin.Y + $lineOption.Children[0].ActualHeight / 2) - ($pickerOrigin.Y + $lineCount.ActualHeight / 2)) -lt 1 -and $pickerOrigin.X -ge ($labelOrigin.X + $lineOption.Children[0].ActualWidth)) "translation row selector stays beside its label at settings width $settingsWidth"
+    }
+    $tracker.Clear()
+    [void]$tracker.Observe('Line one. Line two. Line three. Line four. Line five. Line six. Line seven.', 'en', [DateTime]::UtcNow)
+    foreach ($segment in $tracker.Segments) { [void]$tracker.Accept($segment.Id, $segment.Revision, 'en', $segment.Text.Replace('Line', 'Translated')) }
+    $lineCount.SelectedItem = 6
+    Assert ($languageSettings.TranslationLines -eq 6 -and @($tracker.DisplaySegments).Count -eq 6 -and $currentText.Text.Split(@([Environment]::NewLine), [StringSplitOptions]::None).Count -eq 6 -and $currentText.Text.StartsWith('Translated two.')) 'selecting six immediately renders the latest six current translations'
+    $sixLineHeight = $window.Height
+    $persistedLines = [LCET.Settings]::Load($Root)
+    Assert ($persistedLines.TranslationLines -eq 6) 'translation line selection is immediately persisted'
+    $lineCount.SelectedItem = 2
+    Assert ($languageSettings.TranslationLines -eq 2 -and @($tracker.DisplaySegments).Count -eq 2 -and $currentText.Text -eq ('Translated six.' + [Environment]::NewLine + 'Translated seven.') -and $window.Height -lt $sixLineHeight) 'selecting two prunes older display rows and reduces overlay height without clearing history'
+    Assert ($tracker.Segments.Count -eq 7) 'display line selection does not discard transcript or scheduling history'
+    [void]$tracker.Observe('Pending new sentence', 'en', [DateTime]::UtcNow)
+    $lineCount.SelectedItem = 6
+    $lineCount.SelectedItem = 2
+    Assert ($type.GetField('displayedTranslations', $flags).GetValue($window).Count -le 2 -and $currentText.Text.StartsWith('Translated six.')) 'changing line count while waiting preserves a bounded last translation frame'
+    $lineCount.SelectedItem = 3
+    $window.Content.Measure((New-Object System.Windows.Size(900, 124)))
+    $window.Content.Arrange((New-Object System.Windows.Rect(0, 0, 900, 124)))
+    $window.Content.UpdateLayout()
+    $textOrigin = $currentText.TranslatePoint((New-Object System.Windows.Point(0, 0)), $window.Content)
+    $toolbar = [System.Windows.LogicalTreeHelper]::GetParent($buttons[0])
+    Assert ([System.Windows.Controls.DockPanel]::GetDock($toolbar) -eq [System.Windows.Controls.Dock]::Right -and $textOrigin.Y -le 2) 'toolbar sits beside top-aligned captions instead of reserving a blank top row'
+    Assert ($status.Parent.ActualHeight -le 16 -and $grip.ActualHeight -ge 28) 'compact footer keeps the full resize target without reserving a blank bottom row'
     $tracker.Clear()
     [void]$tracker.Observe((('One ' * 60) + '. ' + ('Two ' * 60) + '. ' + ('Three ' * 60) + '.'), 'en', [DateTime]::UtcNow)
     foreach ($segment in $tracker.Segments) { [void]$tracker.Accept($segment.Id, $segment.Revision, 'en', ('translated text ' * 40)) }
@@ -186,12 +224,20 @@ try {
     Assert ($currentText.Text.Split(@([Environment]::NewLine), [StringSplitOptions]::None).Count -eq 3) 'display still retains only three current translation segments'
     Assert ($currentText.TextWrapping -eq [System.Windows.TextWrapping]::Wrap -and $currentText.TextTrimming -eq [System.Windows.TextTrimming]::None) 'long translations wrap naturally without ellipsis truncation'
     Assert ($currentText.ActualHeight -gt 3 * $currentText.LineHeight -and $scroll.ScrollableHeight -gt 0) 'narrow window lays out long translations across multiple visual lines with scrolling'
+    $previousTranslationFrame = $currentText.Text
     [void]$tracker.Observe('New pending sentence', 'en', [DateTime]::UtcNow)
     $render.Invoke()
-    Assert ($currentText.Text -eq '') 'replaced Windows snapshot removes unrelated old translations instead of replaying history'
+    Assert ($currentText.Text -eq $previousTranslationFrame) 'new untranslated snapshot retains the last translation frame instead of flashing a waiting message'
+    Assert ($type.GetField('readinessStatus', $flags).GetValue($window).Visibility -eq [System.Windows.Visibility]::Collapsed) 'waiting readiness does not replace retained translations'
+    [void]$tracker.Observe('', 'en', [DateTime]::UtcNow)
+    $render.Invoke()
+    Assert ($currentText.Text -eq $previousTranslationFrame) 'temporary empty visible range retains the last translation frame'
+    [void]$tracker.Observe('New pending sentence', 'en', [DateTime]::UtcNow)
+    $render.Invoke()
     $newest = $tracker.Segments[$tracker.Segments.Count - 1]
     [void]$tracker.Accept($newest.Id, $newest.Revision, 'en', 'Preview translation')
     $render.Invoke()
+    Assert ($currentText.Text -eq 'Preview translation' -and $type.GetField('displayedTranslations', $flags).GetValue($window).Count -eq 1) 'first new visible translation replaces the whole retained frame without pinning old top rows'
     [void]$tracker.Observe('New corrected sentence', 'en', [DateTime]::UtcNow)
     $render.Invoke()
     Assert ($currentText.Text.EndsWith('Preview translation')) 'recognition correction keeps last displayed preview until corrected translation arrives'
@@ -368,7 +414,7 @@ try {
     [void]$tracker.Accept($segment.Id, $segment.Revision, 'en', 'Current translated sentence')
     $render.Invoke()
     Assert ($currentText.Text -eq 'Current translated sentence' -and $readiness.Visibility -eq [System.Windows.Visibility]::Collapsed) 'received translation replaces readiness state without extra history or source'
-    $tracker.Clear()
+    $type.GetMethod('ResetCaptions', $flags).CreateDelegate([Action], $window).Invoke()
     $models.Clear()
     $render.Invoke()
     Assert ($readiness.Visibility -eq [System.Windows.Visibility]::Visible -and $readiness.Text.Contains('Edge')) 'missing current-direction model visible in empty overlay'
@@ -382,19 +428,26 @@ try {
     $type.GetField('emitted', $flags).GetValue($window).Clear()
     $type.GetField('snapshot', $flags).SetValue($window, $null)
     $type.GetField('lastSnapshot', $flags).SetValue($window, $null)
-    [void]$tracker.Observe(((1..14 | ForEach-Object { "Sentence $_." }) -join ' '), 'en', [DateTime]::UtcNow.AddSeconds(-3))
+    [void]$tracker.Observe((((1..14 | ForEach-Object { "Clause $_" }) -join ', ') + '.'), 'en', [DateTime]::UtcNow.AddSeconds(-3))
     $allIds = @($tracker.Segments | ForEach-Object { $_.Id })
     $tick.Invoke($null, [EventArgs]::Empty)
     $flight = $type.GetField('inFlight', $flags).GetValue($window)
     $scheduledIds = @($flight.Keys | Sort-Object)
-    Assert (($scheduledIds -join ',') -eq (($allIds | Select-Object -First 12) -join ',')) 'backlog schedules oldest twelve untranslated sentences instead of newest twelve'
+    Assert ($flight.Count -eq 2 -and $flight.ContainsKey($allIds[13]) -and $flight.ContainsKey($allIds[12])) 'two interchangeable slots both accept the newest visible captions instead of reserving one for history'
     Assert ($tracker.Segments.Count -eq 14) 'backend retains pending translations beyond three display lines'
-    $queuedWork = $flight[$allIds[11]]
+    $pendingLabel = ([string][char]0x5F85) + [char]0x63D0 + [char]0x4EA4 + ' 12'
+    Assert ($labels[2].Text.Contains($pendingLabel)) 'status exposes twelve unsent clauses behind the two active slots'
+    $queuedWork = $flight[$allIds[13]]
     $queuedWork.Sent = [DateTime]::UtcNow.AddSeconds(-20)
     $tick.Invoke($null, [EventArgs]::Empty)
-    Assert ($queuedWork.Retries -eq 0 -and $queuedWork.Deadline -gt [DateTime]::UtcNow.AddSeconds(200)) 'serial queue waiting time does not consume per-sentence execution timeout'
+    Assert ($queuedWork.Retries -eq 0 -and $queuedWork.Deadline -gt [DateTime]::UtcNow.AddSeconds(10)) 'in-progress translation is not retried just because later clauses are waiting'
+    Assert ($flight.Count -eq 2 -and $flight.ContainsKey($allIds[13]) -and $flight.ContainsKey($allIds[12])) 'repeated ticks cannot exceed the two-slot limit while both results are pending'
     $captionReceive = $type.GetMethod('Receive', $flags).CreateDelegate([Action[string,System.Collections.Generic.Dictionary[string,object]]], $window)
-    foreach ($segmentId in $scheduledIds) {
+    $sequentialOrder = $true
+    $liveUpdatedBeforeDrain = $false
+    $dispatchOrder = @($allIds | Select-Object -Last 3 | Sort-Object -Descending) + @($allIds | Select-Object -First 11)
+    foreach ($segmentId in ($dispatchOrder | Select-Object -First 12)) {
+        if ($flight.Count -gt 2 -or -not $flight.ContainsKey($segmentId)) { $sequentialOrder = $false; break }
         $work = $flight[$segmentId]
         $result = New-Object 'System.Collections.Generic.Dictionary[string,object]'
         $result['generation'] = $type.GetField('generation', $flags).GetValue($window)
@@ -406,10 +459,17 @@ try {
         $result['status'] = 'ok'
         $result['translatedText'] = "Translation $segmentId"
         $captionReceive.Invoke('/result', $result)
+        $tick.Invoke($null, [EventArgs]::Empty)
+        if ($segmentId -eq $allIds[13]) {
+            $liveUpdatedBeforeDrain = $currentText.Text -eq "Translation $segmentId" -and $flight.Count -eq 2 -and $flight.ContainsKey($allIds[12]) -and $flight.ContainsKey($allIds[11])
+        }
     }
-    $tick.Invoke($null, [EventArgs]::Empty)
-    Assert ((@($flight.Keys | Sort-Object) -join ',') -eq (($allIds | Select-Object -Last 2) -join ',')) 'remaining sentences enter queue after first batch returns with none skipped'
-    $retryId = $allIds[12]
+    Assert $liveUpdatedBeforeDrain 'a freed slot immediately accepts the next caption while the other slot stays busy and live text updates'
+    Assert $sequentialOrder 'visible clauses run newest first and historical backlog then drains in source order'
+    $liveFrame = (($allIds | Select-Object -Last 3 | ForEach-Object { "Translation $_" }) -join [Environment]::NewLine)
+    Assert ($currentText.Text -eq $liveFrame) 'historical task results never replace the newer live translation frame'
+    Assert ($flight.Count -eq 2 -and $flight.ContainsKey($dispatchOrder[12]) -and $flight.ContainsKey($dispatchOrder[13])) 'both remaining historical clauses can use the two slots when no live work is waiting'
+    $retryId = $dispatchOrder[12]
     $work = $flight[$retryId]
     $result['segmentId'] = $retryId
     $result['revision'] = $work.Revision
@@ -429,11 +489,63 @@ try {
     $result['translatedText'] = 'Recovered translation'
     $captionReceive.Invoke('/result', $result)
     Assert (-not $flight.ContainsKey($retryId) -and $work.Segment.Translation -eq 'Recovered translation') 'successful retry updates original sentence rather than losing it'
-    $exhausted = $flight[$allIds[13]]
+    $tick.Invoke($null, [EventArgs]::Empty)
+    Assert ($flight.Count -eq 1 -and $flight.ContainsKey($dispatchOrder[13])) 'last historical clause waits for its predecessor and is eventually submitted'
+    $exhausted = $flight[$dispatchOrder[13]]
     $exhausted.Retries = 2
     $exhausted.Deadline = [DateTime]::UtcNow.AddSeconds(-1)
     $tick.Invoke($null, [EventArgs]::Empty)
-    Assert (-not $flight.ContainsKey($allIds[13]) -and $type.GetField('failedTranslations', $flags).GetValue($window) -eq 1) 'retry exhaustion stops work and exposes failure count instead of retrying forever'
+    Assert (-not $flight.ContainsKey($dispatchOrder[13]) -and $type.GetField('failedTranslations', $flags).GetValue($window) -eq 1) 'retry exhaustion stops work and exposes failure count instead of retrying forever'
+    [void]$tracker.Accept($exhausted.Segment.Id, $exhausted.Segment.Revision, 'en', 'Completed old sentence')
+    [void]$tracker.Observe('One new utterance.', 'en', [DateTime]::UtcNow.AddSeconds(-3))
+    $type.GetMethod('Invalidate', $flags).CreateDelegate([Action], $window).Invoke()
+    $tick.Invoke($null, [EventArgs]::Empty)
+    Assert ($flight.Count -eq 1 -and @($flight.Values)[0].Text -eq 'One new utterance.') "control reset queues only the new utterance, not translated history (actual queued: $($flight.Count))"
+    $liveDuringSpeech = $true
+    $deliveredDuringSpeech = 0
+    $returnedBeforeSpeech = $type.GetField('accepted', $flags).GetValue($window)
+    $result['generation'] = $type.GetField('generation', $flags).GetValue($window)
+    foreach ($number in 1..12) {
+        [void]$tracker.Observe("Live $number clause A, Live $number clause B, Live $number clause C.", 'en', [DateTime]::UtcNow.AddSeconds(-3))
+        foreach ($previousWork in @($flight.Values)) {
+            $result['segmentId'] = $previousWork.Segment.Id
+            $result['revision'] = $previousWork.Revision
+            $result['status'] = 'ok'
+            $result['translatedText'] = "Delayed translation $number"
+            $captionReceive.Invoke('/result', $result)
+            $deliveredDuringSpeech++
+        }
+        $tick.Invoke($null, [EventArgs]::Empty)
+        $liveWork = @($flight.Values | Where-Object { $_.Text -eq "Live $number clause C." })[0]
+        if ($null -eq $liveWork -or $liveWork.Text -ne "Live $number clause C.") { $liveDuringSpeech = $false; break }
+        $result['segmentId'] = $liveWork.Segment.Id
+        $result['revision'] = $liveWork.Revision
+        $result['translatedText'] = "Live translation $number"
+        $captionReceive.Invoke('/result', $result)
+        $deliveredDuringSpeech++
+        $tick.Invoke($null, [EventArgs]::Empty)
+        if ($currentText.Text -ne "Live translation $number" -or $flight.Count -ne 2 -or @($tracker.Ready([DateTime]::UtcNow, $savedSettings.DebounceMs)).Count -le 1) { $liveDuringSpeech = $false; break }
+    }
+    Assert $liveDuringSpeech 'twelve continuously rolling snapshots update live text while translation and submission backlog remain active'
+    Assert (($type.GetField('accepted', $flags).GetValue($window) - $returnedBeforeSpeech) -eq $deliveredDuringSpeech -and $deliveredDuringSpeech -ge 24) 'both slots can keep returning results without delaying live display until the queue stops'
+    [void]$tracker.Observe('Latest requested clause.', 'en', [DateTime]::UtcNow.AddSeconds(-3))
+    foreach ($previousWork in @($flight.Values)) {
+        $result['segmentId'] = $previousWork.Segment.Id
+        $result['revision'] = $previousWork.Revision
+        $result['translatedText'] = 'Delayed prior clause'
+        $captionReceive.Invoke('/result', $result)
+    }
+    $tick.Invoke($null, [EventArgs]::Empty)
+    $movingWork = @($flight.Values)[0]
+    Assert ($currentText.Text -eq 'Live translation 12') 'an older delayed live result cannot replace a newer displayed translation'
+    Assert ($movingWork.Text -eq 'Latest requested clause.') 'newest live clause is selected before the source scrolls again'
+    [void]$tracker.Observe('Speech already moved to another clause.', 'en', [DateTime]::UtcNow.AddSeconds(-3))
+    $result['segmentId'] = $movingWork.Segment.Id
+    $result['revision'] = $movingWork.Revision
+    $result['translatedText'] = 'Latest available live translation'
+    $captionReceive.Invoke('/result', $result)
+    $tick.Invoke($null, [EventArgs]::Empty)
+    Assert ($currentText.Text.EndsWith('Latest available live translation') -and $flight.Count -eq 1) 'a live result updates the last available translation even when speech scrolls before it returns'
     Assert ($setPair.Invoke('en', 'ja') -and $savedSettings.LanguageConfirmed) 'changing only target preserves recognition confirmation'
     Assert ($targetPicker.SelectedValue -eq 'ja' -and $languageButton.Content.ToString() -eq 'EN/' + [char]0x4E2D) 'native target selector updates while bilingual shortcut remains available'
     [void]$tracker.Observe('Selected target caption.', 'en', 'ja', [DateTime]::UtcNow.AddSeconds(-3))

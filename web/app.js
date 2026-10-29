@@ -9,6 +9,8 @@ const languageNames = new Intl.DisplayNames(["zh-CN"], { type: "language" });
 $("manual-source").value = "en";
 $("manual-target").value = "zh";
 let events, active, generation = 0, completed = 0, failures = 0, busy = false, preparing = false, closed = false;
+let secondaryActive, secondaryBusy = false, secondaryModel, secondaryModelKey = "";
+let nextSecondary = false;
 let pageId = crypto.randomUUID();
 let manualPending, manualReceipt, receiptTimer, leaseTimer, verificationController;
 let connected = false, verifying = false;
@@ -45,7 +47,7 @@ function updateModelButton() {
 
 function updateManualControls() {
   updateModelButton();
-  const occupied = manualPreparing || !!manualPending || active?.kind === "manual" || !!manualReceipt?.waiting;
+  const occupied = manualPreparing || !!manualPending || !!activeManual() || !!manualReceipt?.waiting;
   $("manual-source").disabled = $("manual-target").disabled = closed || occupied;
   $("manual-swap").disabled = closed || occupied;
   $("manual-submit").disabled = closed || !connected || occupied ||
@@ -79,7 +81,7 @@ function status(state, detail, sourceLanguage = "") {
     $("status").textContent = issue ? issue.detail : downloadingModels ? "下载中..." : "正在检查模型...";
   } else $("status").textContent = detail;
   if (connected && captionPair(manualPair()) && (!sourceLanguage || sourceLanguage === $("manual-source").value) &&
-      !manualPending && active?.kind !== "manual" && !manualReceipt &&
+      !manualPending && !activeManual() && !manualReceipt &&
       ["ready", "loading", "downloadable", "unavailable", "error"].includes(state))
     $("manual-status").textContent = state === "ready" ? "就绪 · 自动记录开启" : detail;
   void post("/status", { state, detail, sourceLanguage }).catch(() => {
@@ -231,26 +233,60 @@ async function prepare(allowDownload) {
   }
 }
 
-async function drain() {
-  if (busy || verifying || checkingModels || closed) return;
-  busy = true;
+function activeTasks() { return [active, secondaryActive].filter(Boolean); }
+function activeManual() { return activeTasks().find(work => work.kind === "manual"); }
+
+function drain() {
+  const preferred = nextSecondary;
+  void drainLane(preferred);
+  void drainLane(!preferred);
+}
+
+async function drainLane(secondary) {
+  if ((secondary ? secondaryBusy : busy) || verifying || checkingModels || closed) return;
+  const task = manualPending || [...pending.values()].find(item => !activeTasks().some(work => work.segmentId === item.segmentId));
+  if (!task) return;
+  const manual = task.kind === "manual";
+  let translator = manual ? manualTranslator() : captionPair(task) ? sessions.get(task.sourceLanguage) : captionModelKey === pairKey(task) ? captionModel : undefined;
+  if (!translator) return;
+  if (secondary) secondaryBusy = true;
+  else busy = true;
+  nextSecondary = !secondary;
   try {
-    while ((manualPending || pending.size) && !closed) {
-      const task = manualPending || pending.values().next().value;
-      const manual = task.kind === "manual";
-      const translator = manual ? manualTranslator() : captionPair(task) ? sessions.get(task.sourceLanguage) : captionModelKey === pairKey(task) ? captionModel : undefined;
-      if (!translator) break;
+    do {
       if (manual) manualPending = null;
       else pending.delete(task.segmentId);
       const controller = new AbortController();
       const deadline = setTimeout(() => controller.abort(), 15000);
-      active = { ...task, controller };
+      const work = { ...task, controller };
+      if (secondary) secondaryActive = work;
+      else active = work;
       updateManualControls();
       const start = performance.now();
       try {
+        if (secondary) {
+          if (secondaryModelKey !== pairKey(task)) {
+            const { options, availability } = await findTranslationPair(task.sourceLanguage, task.targetLanguage);
+            if (availability !== "available") throw new Error("SecondaryModelUnavailable");
+            if (controller.signal.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+            const model = await Translator.create({ ...options, signal: controller.signal });
+            if (closed || controller.signal.aborted || work.cancelled || task.generation !== generation) {
+              model.destroy();
+              throw Object.assign(new Error("aborted"), { name: "AbortError" });
+            }
+            try { secondaryModel?.destroy(); } catch {}
+            secondaryModel = model;
+            secondaryModelKey = pairKey(task);
+          }
+          translator = secondaryModel;
+        }
         const translatedText = await translator.translate(task.text, { signal: controller.signal });
-        if (closed || controller.signal.aborted || task.generation !== generation) continue;
+        if (closed || work.cancelled || task.generation !== generation) continue;
+        if (controller.signal.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
         if (typeof translatedText !== "string" || !translatedText.trim() || translatedText.length > 8000) throw new Error("InvalidTranslation");
+        const repeatedLetters = translatedText.match(/(\p{L})\1{23,}/gu) || [];
+        if (repeatedLetters.some(run => run.length > Math.max(24, task.text.length * 4)))
+          throw Object.assign(new Error("RepetitiveTranslation"), { name: "RepetitiveTranslation" });
         if (manual) {
           $("manual-output").value = translatedText;
           manualReceipt = { requestId: task.requestId, waiting: true };
@@ -270,7 +306,12 @@ async function drain() {
         $("count").textContent = completed;
         $("latency").textContent = `${Math.round(performance.now() - start)} ms`;
       } catch (error) {
-        if (!closed && task.generation === generation && !active?.cancelled) {
+        if (secondary && secondaryModel === translator && controller.signal.aborted) {
+          try { secondaryModel.destroy(); } catch {}
+          secondaryModel = undefined;
+          secondaryModelKey = "";
+        }
+        if (!closed && task.generation === generation && !work.cancelled) {
           if (manual) {
             clearTimeout(receiptTimer);
             if (manualReceipt?.requestId === task.requestId) manualReceipt.waiting = false;
@@ -283,15 +324,21 @@ async function drain() {
         }
       } finally {
         clearTimeout(deadline);
-        active = null;
+        if (secondary) secondaryActive = null;
+        else active = null;
         updateManualControls();
       }
-    }
-  } finally { busy = false; updateModelButton(); }
+    } while (false);
+  } finally {
+    if (secondary) secondaryBusy = false;
+    else busy = false;
+    updateModelButton();
+    drain();
+  }
 }
 
 function reset(nextGeneration) {
-  if (manualPending || active?.kind === "manual" || manualReceipt?.waiting)
+  if (manualPending || activeManual() || manualReceipt?.waiting)
     $("manual-status").textContent = "会话已切换，未确认的记录请检查会议文件";
   manualPending = null;
   manualRevision++;
@@ -301,8 +348,12 @@ function reset(nextGeneration) {
   clearTimeout(receiptTimer);
   verificationController?.abort();
   generation = nextGeneration;
+  nextSecondary = false;
   pending.clear();
-  active?.controller.abort();
+  for (const work of activeTasks()) { work.cancelled = true; work.controller.abort(); }
+  try { secondaryModel?.destroy(); } catch {}
+  secondaryModel = undefined;
+  secondaryModelKey = "";
 }
 
 function release(message, closeWindow = false) {
@@ -375,8 +426,9 @@ function connect() {
     const task = JSON.parse(event.data);
     if (task.generation !== generation || closed) return;
     renewLease();
-    if (active?.segmentId === task.segmentId && active.revision >= task.revision) return;
-    if (active?.segmentId === task.segmentId) active.controller.abort();
+    const running = activeTasks().find(work => work.segmentId === task.segmentId);
+    if (running?.revision >= task.revision) return;
+    if (running) { running.cancelled = true; running.controller.abort(); }
     const older = pending.get(task.segmentId);
     if (older && older.revision >= task.revision) return;
     pending.set(task.segmentId, task);
@@ -387,7 +439,9 @@ function connect() {
     const data = JSON.parse(event.data);
     for (const id of data.segmentIds) {
       pending.delete(id);
-      if (active?.segmentId === id) active.controller.abort();
+      for (const work of activeTasks()) {
+        if (work.segmentId === id) { work.cancelled = true; work.controller.abort(); }
+      }
     }
   });
   events.addEventListener("verify", () => { void verifyModels(); });
@@ -412,7 +466,7 @@ function connect() {
 
 $("prepare").onclick = async () => {
   if (closed || preparing || verifying || checkingModels) return;
-  if (busy) {
+  if (busy || secondaryBusy) {
     $("status").textContent = "正在翻译，请在当前翻译完成后操作模型";
     return;
   }
@@ -466,7 +520,7 @@ async function checkManualPair() {
 }
 
 function changeManualPair() {
-  if (manualPreparing || manualPending || active?.kind === "manual" || manualReceipt?.waiting) return;
+  if (manualPreparing || manualPending || activeManual() || manualReceipt?.waiting) return;
   manualDirectionPending = false;
   manualRevision++;
   try { manualModel?.destroy(); } catch {}
@@ -531,7 +585,7 @@ $("manual-form").onsubmit = async event => {
   manualPending = { kind: "manual", requestId: crypto.randomUUID(), generation, text, ...pair };
   manualReceipt = null;
   $("manual-output").value = "";
-  $("manual-status").textContent = busy || verifying ? "等待当前翻译完成" : "正在翻译";
+  $("manual-status").textContent = (busy && secondaryBusy) || verifying ? "等待当前翻译完成" : "正在翻译";
   updateManualControls();
   void drain();
 };
@@ -540,7 +594,8 @@ $("manual-clear").onclick = () => {
   manualPreparationController?.abort();
   manualPreparing = false;
   manualPending = null;
-  if (active?.kind === "manual") { active.cancelled = true; active.controller.abort(); }
+  const manual = activeManual();
+  if (manual) { manual.cancelled = true; manual.controller.abort(); }
   manualReceipt = null;
   clearTimeout(receiptTimer);
   $("manual-input").value = "";
@@ -555,7 +610,7 @@ $("manual-copy").onclick = async () => {
 };
 async function verifyModels() {
   if (closed) return;
-  if (sessions.size !== 2 || busy || verifying) {
+  if (sessions.size !== 2 || busy || secondaryBusy || verifying) {
     $("verification").textContent = "模型验证：请先准备双向模型并暂停字幕翻译";
     status("verification_failed", "模型验证未执行：请先准备双向模型并暂停字幕翻译");
     return;

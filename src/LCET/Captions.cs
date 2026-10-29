@@ -31,6 +31,7 @@ namespace LCET
         private Segment current;
         private long nextId;
         public string LastChange { get; private set; }
+        public int DisplayLimit { get; set; } = 3;
         public IList<Segment> Segments { get { return segments.AsReadOnly(); } }
         public IEnumerable<Segment> DisplaySegments
         {
@@ -38,10 +39,13 @@ namespace LCET
             {
                 var visible = new List<Segment>();
                 int end = previous.Length;
-                for (int index = segments.Count - 1; index >= 0 && end > 0 && visible.Count < 3; index--)
+                int limit = Math.Max(2, Math.Min(6, DisplayLimit));
+                for (int index = segments.Count - 1; index >= 0 && end > 0 && visible.Count < limit; index--)
                 {
                     Segment segment = segments[index];
                     int match = previous.LastIndexOf(segment.Text, end - 1, end, StringComparison.Ordinal);
+                    if (match < 0 && ReferenceEquals(segment, current) && segment.Text.EndsWith(previous, StringComparison.Ordinal))
+                        match = 0;
                     if (match < 0) continue;
                     visible.Add(segment);
                     end = match;
@@ -185,9 +189,10 @@ namespace LCET
         {
             foreach (Segment segment in segments)
             {
+                if (segment.TranslationRevision == segment.Revision && !string.IsNullOrWhiteSpace(segment.Translation)) continue;
                 bool settled = (now - segment.Changed).TotalMilliseconds >= debounceMs;
-                bool previewDue = (now - segment.Created).TotalMilliseconds >= 800 &&
-                    (now - segment.LastSubmitted).TotalMilliseconds >= 800;
+                bool previewDue = (now - segment.Created).TotalMilliseconds >= 1500 &&
+                    (now - segment.LastSubmitted).TotalMilliseconds >= 1500;
                 if (!settled && !previewDue) continue;
                 if (settled) segment.Stable = true;
                 yield return segment;

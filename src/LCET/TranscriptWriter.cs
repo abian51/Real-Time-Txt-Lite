@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Security;
@@ -18,6 +19,7 @@ namespace LCET
 
         private readonly BlockingCollection<Entry> pending = new BlockingCollection<Entry>(128);
         private readonly ManualResetEvent stopping = new ManualResetEvent(false);
+        private readonly ManualResetEvent flushRequested = new ManualResetEvent(false);
         private readonly Thread worker;
         private volatile string lastError;
         private int disposed;
@@ -80,16 +82,29 @@ namespace LCET
 
         private void Write()
         {
-            foreach (Entry entry in pending.GetConsumingEnumerable())
+            while (!stopping.WaitOne(0))
             {
+                flushRequested.WaitOne(4000);
+                if (stopping.WaitOne(0)) return;
+                var batch = new List<Entry>();
+                Entry entry;
+                while (batch.Count < 128 && pending.TryTake(out entry)) batch.Add(entry);
+                if (batch.Count == 0)
+                {
+                    if (pending.IsCompleted) return;
+                    continue;
+                }
+                var text = new StringBuilder();
+                foreach (Entry item in batch) text.Append(item.Text);
                 while (!stopping.WaitOne(0))
                 {
                     try
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
-                        File.AppendAllText(FilePath, entry.Text, new UTF8Encoding(true));
+                        File.AppendAllText(FilePath, text.ToString(), new UTF8Encoding(true));
                         lastError = null;
-                        if (entry.RequestId != null) ManualRecorded?.Invoke(entry.RequestId);
+                        foreach (Entry item in batch)
+                            if (item.RequestId != null) ManualRecorded?.Invoke(item.RequestId);
                         break;
                     }
                     catch (IOException exception) { lastError = exception.GetType().Name; }
@@ -97,7 +112,7 @@ namespace LCET
                     catch (SecurityException exception) { lastError = exception.GetType().Name; }
                     if (stopping.WaitOne(1000)) return;
                 }
-                if (stopping.WaitOne(0)) return;
+                if (pending.IsCompleted) return;
             }
         }
 
@@ -117,6 +132,7 @@ namespace LCET
         {
             if (Interlocked.Exchange(ref disposed, 1) != 0) return;
             pending.CompleteAdding();
+            flushRequested.Set();
             if (!worker.Join(5000))
             {
                 lastError = "flush_timeout";
@@ -126,6 +142,7 @@ namespace LCET
             }
             pending.Dispose();
             stopping.Dispose();
+            flushRequested.Dispose();
         }
     }
 }

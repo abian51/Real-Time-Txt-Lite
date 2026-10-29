@@ -99,6 +99,262 @@ test("manual model page launch blocks duplicate clicks only while the request is
   assert.equal(button.disabled, false);
 });
 
+test("caption results reject runaway letters but preserve ordinary and source-backed repetition", async () => {
+  const cases = [
+    { source: "嗯嗯嗯嗯。", translation: "H" + "m".repeat(1000), rejected: true },
+    { source: "Yes.", translation: "嗯".repeat(100), rejected: true },
+    { source: "嗯嗯嗯嗯。", translation: "Hmm...", rejected: false },
+    { source: "嗯嗯嗯嗯。", translation: "H" + "m".repeat(24), rejected: false },
+    { source: "嗯嗯嗯嗯。", translation: "H" + "m".repeat(25), rejected: true },
+    { source: "m".repeat(100), translation: "m".repeat(100), rejected: false },
+    { source: "Numeric precision", translation: "0." + "0".repeat(100) + "1", rejected: false },
+    { source: "讨论。", translation: "The participants discussed the schedule and agreed to meet again next week.", rejected: false }
+  ];
+  for (const example of cases) {
+    const app = harness();
+    await flush();
+    const events = app.streams[0];
+    events.emit("control", { generation: 4 });
+    events.emit("task", { ...task(1035, 1), text: example.source, sourceLanguage: "zh", targetLanguage: "en" });
+    app.calls[0].resolve(example.translation);
+    await flush();
+    const results = app.requests.filter(request => request.url === "/result");
+    assert.equal(results.length, 1);
+    assert.equal(results[0].body.status, example.rejected ? "error" : "ok");
+    if (example.rejected) {
+      assert.equal(results[0].body.errorCode, "RepetitiveTranslation");
+      assert.equal(results[0].body.translatedText, undefined);
+      assert.equal(app.elements.get("count")?.textContent, undefined);
+    } else {
+      assert.equal(results[0].body.translatedText, example.translation);
+    }
+  }
+});
+
+test("manual runaway repetition is not displayed or submitted for recording", async () => {
+  const app = harness();
+  await flush();
+  app.streams[0].emit("control", { generation: 4, sourceLanguage: "zh", targetLanguage: "en" });
+  app.context.document.getElementById("manual-input").value = "嗯嗯嗯嗯。";
+  app.context.document.getElementById("manual-output").value = "previous valid translation";
+  await app.elements.get("manual-form").onsubmit({ preventDefault() {} });
+  app.calls[0].resolve("H" + "m".repeat(1000));
+  await flush();
+  assert.equal(app.requests.filter(request => request.url === "/manual-result").length, 0);
+  assert.equal(app.elements.get("manual-output").value, "");
+  assert.match(app.elements.get("manual-status").textContent, /RepetitiveTranslation/);
+});
+
+test("two interchangeable slots translate ordinary captions on separate sessions", async () => {
+  let nextSession = 0;
+  const calls = [];
+  const app = harness({ create: async () => {
+    const session = ++nextSession;
+    return {
+      destroy() {},
+      translate(text, { signal }) {
+        return new Promise((resolve, reject) => {
+          calls.push({ session, text, signal, resolve, reject });
+          signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+        });
+      }
+    };
+  } });
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  events.emit("task", task(2, 1));
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.notEqual(calls[0].session, calls[1].session);
+  calls[1].resolve("historical translation");
+  await flush();
+  assert.equal(calls[0].signal.aborted, false);
+  assert.equal(app.requests.filter(request => request.url === "/result" && request.body.status === "ok")[0].body.segmentId, 2);
+  calls[0].resolve("live translation");
+  await flush();
+  assert.equal(app.requests.filter(request => request.url === "/result" && request.body.status === "ok").length, 2);
+});
+
+test("successive caption tasks alternate slots when both are idle", async () => {
+  const app = harness();
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  for (const id of [1, 2, 3, 4]) {
+    events.emit("task", task(id, 1));
+    await flush();
+    const assigned = vm.runInContext(id % 2 ? "active?.segmentId" : "secondaryActive?.segmentId", app.context);
+    assert.equal(assigned, id);
+    app.calls[id - 1].resolve(`translation ${id}`);
+    await flush();
+  }
+});
+
+test("a revised sentence waits for its older active call to settle", async () => {
+  const calls = [];
+  const app = harness({ create: async () => ({
+    destroy() {},
+    translate(text, { signal }) { return new Promise(resolve => calls.push({ text, signal, resolve })); }
+  }) });
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  events.emit("task", task(1, 2));
+  await flush();
+  assert.equal(calls[0].signal.aborted, true);
+  assert.equal(calls.length, 1);
+  events.emit("task", task(2, 1));
+  await flush();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].text, task(2, 1).text);
+  calls[0].resolve("obsolete result");
+  await flush();
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].text, task(1, 2).text);
+  calls[1].resolve("other sentence");
+  calls[2].resolve("latest revision");
+  await flush();
+  const results = app.requests.filter(request => request.url === "/result" && request.body.segmentId === 1);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].body.revision, 2);
+});
+
+test("two interchangeable slots stay bounded and automatically refill", async () => {
+  const app = harness();
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  events.emit("task", task(2, 1));
+  await flush();
+  events.emit("task", task(3, 1));
+  events.emit("task", task(4, 1));
+  app.context.document.getElementById("manual-input").value = "typed text";
+  await app.elements.get("manual-form").onsubmit({ preventDefault() {} });
+  assert.equal(app.calls.length, 2);
+  app.calls[0].resolve("live result");
+  await flush();
+  assert.equal(app.calls.length, 3);
+  assert.equal(app.calls[2].text, "typed text");
+  assert.equal(app.calls[1].signal.aborted, false);
+  app.calls[2].resolve("manual result");
+  await flush();
+  assert.equal(app.calls[3].text, task(3, 1).text);
+  app.calls[1].resolve("history result");
+  await flush();
+  assert.equal(app.calls[4].text, task(4, 1).text);
+  events.emit("control", { generation: 5 });
+  await flush();
+});
+
+test("generation changes cancel both slots and destroy the secondary session", async () => {
+  const app = harness();
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  events.emit("task", task(2, 1));
+  await flush();
+  assert.equal(app.calls.length, 2);
+  events.emit("control", { generation: 5 });
+  await flush();
+  assert.ok(app.calls.every(call => call.signal.aborted));
+  assert.equal(vm.runInContext("secondaryModel", app.context), undefined);
+  assert.equal(vm.runInContext("pending.size", app.context), 0);
+  assert.equal(app.requests.filter(request => request.url === "/result").length, 0);
+});
+
+test("cancelling one slot does not interrupt the other or leak a result", async () => {
+  const app = harness();
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  events.emit("task", task(2, 1));
+  await flush();
+  events.emit("task", task(3, 1));
+  events.emit("cancel", { segmentIds: [2] });
+  await flush();
+  assert.equal(app.calls[0].signal.aborted, false);
+  assert.equal(app.calls[1].signal.aborted, true);
+  assert.equal(app.calls[2].text, task(3, 1).text);
+  app.calls[2].resolve("next history result");
+  app.calls[0].resolve("live result");
+  await flush();
+  assert.equal(app.requests.filter(request => request.url === "/result" && request.body.segmentId === 2).length, 0);
+  assert.equal(app.requests.filter(request => request.url === "/result" && request.body.status === "ok").length, 2);
+});
+
+test("one slot timeout reports failure without aborting the other slot", async () => {
+  const app = harness();
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  events.emit("task", task(2, 1));
+  await flush();
+  const deadlines = [...app.timers.values()].filter(timer => timer.delay === 15000);
+  assert.equal(deadlines.length, 2);
+  deadlines[1].callback();
+  await flush();
+  assert.equal(app.calls[0].signal.aborted, false);
+  assert.ok(app.requests.some(request => request.url === "/result" && request.body.segmentId === 2 && request.body.status === "error"));
+  app.calls[0].resolve("live result");
+  await flush();
+});
+
+test("late secondary session is destroyed after generation changes", async () => {
+  let created = 0, destroyed = 0, finishSecondary;
+  const model = () => ({
+    destroy() { destroyed++; },
+    translate: (_text, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+    })
+  });
+  const app = harness({ create: async () => ++created === 3 ? new Promise(resolve => { finishSecondary = resolve; }) : model() });
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  events.emit("task", task(2, 1));
+  await flush();
+  assert.equal(typeof finishSecondary, "function");
+  events.emit("control", { generation: 5 });
+  finishSecondary(model());
+  await flush();
+  assert.equal(destroyed, 1);
+  assert.equal(vm.runInContext("secondaryModel", app.context), undefined);
+  assert.equal(vm.runInContext("activeTasks().length", app.context), 0);
+  assert.equal(app.requests.filter(request => request.url === "/result").length, 0);
+  events.emit("control", { generation: 6, shutdown: true });
+  assert.equal(destroyed, 3);
+});
+
+test("clearing manual work in the secondary slot leaves the first slot running", async () => {
+  const app = harness();
+  await flush();
+  const events = app.streams[0];
+  events.emit("control", { generation: 4 });
+  events.emit("task", task(1, 1));
+  app.context.document.getElementById("manual-input").value = "clear secondary manual";
+  await app.elements.get("manual-form").onsubmit({ preventDefault() {} });
+  await flush();
+  assert.equal(app.calls.length, 2);
+  assert.equal(app.calls[1].text, "clear secondary manual");
+  assert.equal(app.elements.get("manual-swap").disabled, true);
+  app.elements.get("manual-clear").onclick();
+  await flush();
+  assert.equal(app.calls[1].signal.aborted, true);
+  assert.equal(app.calls[0].signal.aborted, false);
+  assert.equal(app.requests.filter(request => request.url === "/manual-result").length, 0);
+  assert.equal(app.elements.get("manual-swap").disabled, false);
+  app.calls[0].resolve("uninterrupted caption");
+  await flush();
+});
+
 test("new revision aborts active translation and only latest result returns", async () => {
   const app = harness();
   await flush();
@@ -133,6 +389,7 @@ test("model button stays unchanged across repeated subtitle translations", async
   }
   for (let index = 0; index < 3; index++) {
     events.emit("task", task(index + 1, 1));
+    await flush();
     assert.equal(button.textContent, "已安装");
     assert.equal(button.disabled, false);
     await button.onclick();
@@ -241,6 +498,7 @@ test("translation failure retains model readiness and allows later tasks", async
   assert.equal(error.body.sourceLanguage, "en");
   assert.equal(vm.runInContext("sessions.size", app.context), 2);
   events.emit("task", task(2, 1));
+  await flush();
   app.calls[1].resolve("recovered");
   await flush();
   assert.ok(app.requests.some(item => item.body.status === "ok" && item.body.segmentId === 2));
@@ -261,7 +519,7 @@ test("handshake and reconnect replay unavailable model states in the current gen
   }
 });
 
-test("manual translation shares serial models and waits for durable recording acknowledgement", async () => {
+test("manual translation uses an idle slot and waits for durable recording acknowledgement", async () => {
   const app = harness();
   await flush();
   const events = app.streams[0];
@@ -269,9 +527,8 @@ test("manual translation shares serial models and waits for durable recording ac
   events.emit("task", task(1, 1));
   app.context.document.getElementById("manual-input").value = "Typed meeting text";
   app.elements.get("manual-form").onsubmit({ preventDefault() {} });
-  assert.equal(app.calls.length, 1);
-  app.calls[0].resolve("caption translation");
   await flush();
+  assert.equal(app.calls.length, 2);
   assert.equal(app.calls[1].text, "Typed meeting text");
   app.calls[1].resolve("manual translation");
   await flush();
@@ -282,6 +539,9 @@ test("manual translation shares serial models and waits for durable recording ac
   events.emit("manual-recorded", { requestId: result.body.requestId, state: "saved" });
   assert.equal(app.elements.get("manual-status").textContent, "翻译完成 · 已写入会议记录");
   assert.equal(app.elements.get("manual-submit").disabled, false);
+  assert.equal(app.calls[0].signal.aborted, false);
+  app.calls[0].resolve("caption translation");
+  await flush();
 });
 
 test("manual recording needs acknowledgement but copying has no privacy gate", async () => {
