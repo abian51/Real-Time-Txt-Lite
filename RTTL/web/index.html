@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LCET · Edge Translator</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><span class="mark">LCET</span><span id="connection" role="status">连接中</span></header>
+    <section class="model-setup" aria-label="翻译模型">
+      <button id="prepare" type="button" disabled>正在检查模型...</button>
+      <button id="manual-model-download" class="secondary" type="button" title="使用 Microsoft Edge 打开微软官方 Translator API 页面">手动下载微软模型</button>
+      <p id="status" role="status">正在检查模型...</p>
+      <p id="model-download-status" role="status" aria-live="polite" hidden></p>
+      <p id="caption-model-status" role="status" aria-live="polite" hidden></p>
+      <dl aria-label="双向模型下载状态">
+        <div><dt>英文 → 中文</dt><dd id="en" aria-live="polite">检查中</dd></div>
+        <div><dt>中文 → 英文</dt><dd id="zh" aria-live="polite">检查中</dd></div>
+      </dl>
+    </section>
+    <div class="translation-heading">
+      <h1>文本翻译</h1>
+      <a id="language-download" href="https://support.microsoft.com/en-us/windows/use-live-captions-to-better-understand-audio-b52da59c-14b8-4031-aeeb-f6a47e6055df#bkmk_addlanguages" target="_blank" rel="noopener noreferrer">字幕语音包安装说明</a>
+    </div>
+    <p class="language-reminder">实时字幕所需语音包，请在 Windows 实时字幕的“字幕语言”菜单中选择语言并下载，无需安装完整的 Windows 显示语言包。Edge 翻译模型单独下载；纯文本翻译无需 Windows 语音包。</p>
+    <form id="manual-form">
+      <div class="manual-toolbar">
+        <div class="language-picker">
+          <label for="manual-source">源语言</label>
+          <select id="manual-source"><option value="en">英文</option></select>
+        </div>
+        <button id="manual-swap" class="direction-swap secondary" type="button" title="交换源语言和目标语言" aria-label="交换源语言和目标语言">⇄</button>
+        <div class="language-picker">
+          <label for="manual-target">目标语言</label>
+          <select id="manual-target"><option value="zh">中文（简体）</option></select>
+        </div>
+        <button id="manual-submit" type="submit" disabled>翻译</button>
+        <button id="manual-clear" class="secondary" type="button">清空</button>
+        <button id="manual-copy" class="secondary" type="button" disabled>复制译文</button>
+      </div>
+      <div class="manual-grid">
+        <label for="manual-input">原文<textarea id="manual-input" maxlength="4000" rows="9" required></textarea></label>
+        <label for="manual-output">译文<textarea id="manual-output" rows="9" readonly></textarea></label>
+      </div>
+      <p id="manual-status" role="status" aria-live="polite">等待连接</p>
+    </form>
+    <details>
+    <summary>高级诊断</summary>
+    <div class="actions"><button id="reconnect" type="button">重新连接</button><button id="verify" type="button">验证双向模型</button></div>
+    <output id="verification" aria-live="polite"></output>
+    </details>
+    <footer><span id="count">0</span> 条译文已返回 <span id="latency"></span></footer>
+  </main>
+</body>
+</html>

@@ -21,12 +21,13 @@ real-time-txt-lite (RTTL) - Windows 实时字幕翻译
 会议 TXT 为本地明文文件，仍需按组织保密要求管理。
 
 一、启动
-将整个 RTTL 文件夹复制到本机，双击 start.bat。
-不要只发送 start.bat，也不要移动内部文件或直接双击 DLL。
-本程序不生成应用 EXE，不需要安装 Visual Studio、.NET SDK 或开发工具。
+将整个 RTTL 文件夹解压或复制到本机，双击 RTTL.exe，也可继续使用 start.bat。
+不要在 ZIP 内直接运行，不要只发送 EXE 或 start.bat，也不要移动内部文件或直接双击 DLL。
+EXE 为未签名的 x64 .NET Framework 图形程序，不是单文件版；仍需保留 web 和 config。无需安装 Visual Studio、.NET SDK 或开发工具。
+本次 EXE 仅完成编译与静态检查，没有运行；若被组织策略阻止，请联系 IT 审批，不要绕过防护。
 
 二、电脑要求
-Windows 11 x64、Windows PowerShell 5.1、.NET Framework 4.8.1 Runtime、Microsoft Edge 148 或更新版本。
+Windows 11 x64、.NET Framework 4.8.1 Runtime、Microsoft Edge 148 或更新版本。EXE 启动不依赖 PowerShell，仅原 BAT 启动需要 Windows PowerShell 5.1。
 首次运行需要完成 Windows 实时字幕授权并安装对应识别语言包。
 Edge 页面每次打开先检查：缺少模型时提示“点击下载微软翻译模型”，下载期间显示“下载中...”。
 双向模型已下载或下载完成后显示“已安装”，不会自动重复下载。

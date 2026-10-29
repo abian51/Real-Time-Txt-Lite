@@ -1,0 +1,12 @@
+bin/
+!RTTL/bin/
+RTTL/bin/*
+!RTTL/bin/LCET.dll
+src/**/obj/
+logs/
+transcripts/
+settings.json
+*.zip
+*.user
+*.suo
+.vs/

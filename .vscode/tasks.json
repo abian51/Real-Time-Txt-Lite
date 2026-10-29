@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "LCET: Build",
+      "type": "process",
+      "command": "${env:WINDIR}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}\\build.ps1"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "LCET: Build and Test",
+      "type": "process",
+      "command": "${env:WINDIR}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": ["-NoProfile", "-File", "${workspaceFolder}\\build.ps1", "-Test"],
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    }
+  ]
+}

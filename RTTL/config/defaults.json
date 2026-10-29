@@ -1,0 +1,17 @@
+{
+  "SourceLanguage": "en",
+  "TargetLanguage": "zh",
+  "LanguageConfirmed": true,
+  "LanguageSetupVersion": 1,
+  "DebounceMs": 400,
+  "PollMs": 250,
+  "FontSize": 22,
+  "TranslationColor": "Black",
+  "Opacity": 0.5,
+  "OverlayLayoutVersion": 3,
+  "FollowWindowsCaptions": true,
+  "Width": 900,
+  "Height": 160,
+  "Left": 100,
+  "Top": 100
+}
